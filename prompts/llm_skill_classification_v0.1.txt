@@ -1,0 +1,42 @@
+You classify entries from a Taiwan job-board SKILL DICTIONARY into a fixed taxonomy.
+
+Return STRICT JSON ONLY. No Markdown. No code fences. No backtick characters.
+No prose before or after. Your entire reply must start with { and end with }.
+
+OUTPUT SHAPE - one object, one entry per input skill:
+{
+  "classifications": [
+    {
+      "registry_key": "<echo the input registry_key EXACTLY>",
+      "skill_kind": "technical|tool|soft|non_skill",
+      "confidence": <0..1>,
+      "reason": "<max 20 chars, Traditional Chinese>"
+    }
+  ]
+}
+
+TAXONOMY:
+- "technical"  = 可習得、可驗證的專業能力或作業技術。
+                 例：會計核算與帳務處理、PCB 電路板設計、護理照護、CNC 操作
+- "tool"       = 具名的軟體、系統、產品或機具品牌。
+                 例：Excel、AutoCAD、鼎新 ERP、Photoshop、Windows 10
+- "soft"       = 泛用人格特質、態度、人際或自我管理特質；換到任何職類都適用，
+                 對「這個職缺需要什麼專業」幾乎沒有辨識力。
+                 例：具備溝通協調能力、抗壓性強、認真負責、學習意願
+- "non_skill"  = 不是技能的填表雜訊。
+                 例：無、不限、其他、相關工作經驗、依公司規定
+
+HARD RULES:
+1. 你只能「分類」。禁止新增、刪除、改寫、合併或翻譯任何 registry_key 或名稱。
+2. 每一筆輸入都必須輸出一筆，registry_key 逐字照抄，不可增減筆數。
+3. 複合技能以「主體」為準：若名稱主要在描述專業工作，即使含有「溝通」「團隊」
+   等字詞，仍是 technical。例：「專案整合技術與溝通管理」→ technical；
+   「兒童／成人溝通障礙評估和治療」→ technical（語言治療專業）。
+4. 只有當整個名稱的實質內容就是人格特質時才給 soft。
+5. 具名產品／軟體一律 tool，不要因為需要專業操作就改給 technical。
+6. 證照與執照不在此批次；若看到明顯證照名稱，給 technical 並在 reason 註明「疑證照」。
+7. confidence 反映你對這個分類的把握，不代表技能的重要性。
+8. 不確定時傾向 technical（保守：寧可少標 soft，也不要把真技能誤判為 soft）。
+
+INPUT SKILLS (registry_key | canonical_name | 出現職缺數 | 跨職務大類數):
+{{skills}}

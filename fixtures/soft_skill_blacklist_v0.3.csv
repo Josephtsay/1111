@@ -1,0 +1,10 @@
+canonical_id,canonical_name,reason,status,category,job_frequency,distinct_occupation_major,occupation_major_entropy_norm,max_occupation_salience,llm_confidence,llm_reason,policy_version,notes
+skill:具備溝通協調能力,具備溝通協調能力,generic_soft_skill,blocked,soft,1040,20,0.8827,0.022,0.95,溝通協調特質,soft_skill_blacklist_policy_v0.3,triple-signal: LLM 語意 + A5 詞彙 + 全量統計 三者一致
+skill:電話接聽與人員接待,電話接聽與人員接待,llm_only_candidate,rejected,soft,14456,18,0.5234,0.1273,0.75,客服溝通能力,soft_skill_blacklist_policy_v0.3,僅 LLM 判 soft，規則訊號不同意；疑為低技術門檻的真實職務任務。status=rejected 不生效，待雙人 sign-off
+skill:維持場所的整潔與美觀,維持場所的整潔與美觀,llm_only_candidate,rejected,soft,3432,18,0.457,0.0446,0.75,環境維護態度,soft_skill_blacklist_policy_v0.3,僅 LLM 判 soft，規則訊號不同意；疑為低技術門檻的真實職務任務。status=rejected 不生效，待雙人 sign-off
+skill:維護辦公室環境清潔,維護辦公室環境清潔,llm_only_candidate,rejected,soft,2590,19,0.5379,0.0437,0.72,清潔維護態度,soft_skill_blacklist_policy_v0.3,僅 LLM 判 soft，規則訊號不同意；疑為低技術門檻的真實職務任務。status=rejected 不生效，待雙人 sign-off
+skill:協商談判技巧,協商談判技巧,llm_only_candidate,rejected,soft,2018,19,0.6596,0.0679,0.75,人際溝通特質,soft_skill_blacklist_policy_v0.3,僅 LLM 判 soft，規則訊號不同意；疑為低技術門檻的真實職務任務。status=rejected 不生效，待雙人 sign-off
+skill:電話開發能力,電話開發能力,llm_only_candidate,rejected,soft,1550,18,0.2228,0.0419,0.7,銷售溝通特質,soft_skill_blacklist_policy_v0.3,僅 LLM 判 soft，規則訊號不同意；疑為低技術門檻的真實職務任務。status=rejected 不生效，待雙人 sign-off
+skill:達成產能與出貨目標,達成產能與出貨目標,llm_only_candidate,rejected,soft,1253,11,0.3628,0.0652,0.75,績效導向特質,soft_skill_blacklist_policy_v0.3,僅 LLM 判 soft，規則訊號不同意；疑為低技術門檻的真實職務任務。status=rejected 不生效，待雙人 sign-off
+skill:具有衝突處理的能力,具有衝突處理的能力,llm_only_candidate,rejected,soft,201,12,0.2525,0.0195,0.85,人際管理特質,soft_skill_blacklist_policy_v0.3,僅 LLM 判 soft，規則訊號不同意；疑為低技術門檻的真實職務任務。status=rejected 不生效，待雙人 sign-off
+skill:具備口語及肢體表達能力,具備口語及肢體表達能力,llm_only_candidate,rejected,soft,50,8,0.4059,0.0356,0.85,表達溝通特質,soft_skill_blacklist_policy_v0.3,僅 LLM 判 soft，規則訊號不同意；疑為低技術門檻的真實職務任務。status=rejected 不生效，待雙人 sign-off
