@@ -1,0 +1,11 @@
+canonical_id,canonical_name,reason,status,notes
+skill:溝通,溝通,generic_soft_skill,proposed,待 Gate 2 與 B 共同確認；step5 soft_skill_blacklist 用 canonical_id
+skill:認真負責,認真負責,generic_soft_skill,proposed,
+skill:抗壓性,抗壓性,generic_soft_skill,proposed,
+skill:積極主動,積極主動,generic_soft_skill,proposed,
+skill:團隊合作,團隊合作,generic_soft_skill,proposed,
+skill:學習能力,學習能力,generic_soft_skill,proposed,
+skill:承壓,承壓,generic_soft_skill,proposed,
+skill:細心,細心,generic_soft_skill,proposed,
+skill:正直,正直,generic_soft_skill,proposed,
+skill:樂觀,樂觀,generic_soft_skill,proposed,

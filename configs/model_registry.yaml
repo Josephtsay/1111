@@ -1,0 +1,105 @@
+# model_registry.yaml — Playbook §Model Decision Contract
+# A 維護；Gate 1 bake-off 填入指標，Gate 2 freeze chosen / fallback。
+#
+# 使用：
+#   1. python step1_train_data_prep.py          # 產生 graph/golden_slice_ids.json
+#   2. python step_a0_llm_bakeoff_prep.py       # 打包 golden prompts（不呼叫 API）
+#   3. 對 candidates 跑抽取 → 填本檔 metrics → Gate 1 review
+
+version: "v0.1-draft"
+schema_version: "v0.1"
+frozen: false
+response_schema_version: "extraction_contract_v0.1"  # playbook §3.4
+golden_set:
+  source: "graph/golden_slice_ids.json"
+  generator: "step1_train_data_prep.py"
+  seed: 2026
+  size: 500
+  challenge_set: "fixtures/assertion_challenge_set_v0.1.jsonl"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tasks（離線建圖 vs 線上 query 分開選模型）
+# ─────────────────────────────────────────────────────────────────────────────
+tasks:
+  unstructured_extraction:
+    task_name: unstructured_extraction
+    role: "Step 2B/2C LLM 補抽與 assertion（必要模組；可 ablation 關閉）"
+    prompt_version: "llm_extraction_v0.1"
+    prompt_path: "prompts/llm_extraction_v0.1.txt"
+    decision_gate: "Gate 1 compare → Gate 2 freeze"
+    quarantine_policy: "below method threshold OR negated/uncertain OR no evidence → quarantine"
+    candidates:
+      - candidate_id: cand_a
+        provider: null          # e.g. bedrock / openai / azure_openai
+        model_id: null
+        model_revision: null
+        decoding:
+          temperature: 0.0
+          max_tokens: 4096
+          seed: 2026
+        metrics:
+          strict_json_success_rate: null
+          mention_precision: null
+          mention_recall: null
+          assertion_accuracy: null
+          avg_cost_usd_per_job: null
+          throughput_jobs_per_hour: null
+          latency_p50_ms: null
+          latency_p95_ms: null
+        status: pending
+      - candidate_id: cand_b
+        provider: null
+        model_id: null
+        model_revision: null
+        decoding:
+          temperature: 0.0
+          max_tokens: 4096
+          seed: 2026
+        metrics:
+          strict_json_success_rate: null
+          mention_precision: null
+          mention_recall: null
+          assertion_accuracy: null
+          avg_cost_usd_per_job: null
+          throughput_jobs_per_hour: null
+          latency_p50_ms: null
+          latency_p95_ms: null
+        status: pending
+    chosen: null
+    fallback: null
+    retry:
+      max_attempts: 2
+      repair: limited_json_repair_only
+
+  canonical_verifier:
+    task_name: canonical_verifier
+    role: "Step 3 LLM verifier：只在既有 candidates 中選擇／拒絕，不可自行建 ID"
+    prompt_version: "llm_canonical_verifier_v0.1"
+    prompt_path: "prompts/llm_canonical_verifier_v0.1.txt"
+    decision_gate: "Gate 1–2"
+    candidates: []
+    chosen: null
+    fallback: null
+
+  semantic_relation:
+    task_name: semantic_relation
+    role: "Step 5C（feature flag；MVP 預設關閉）"
+    prompt_version: null
+    decision_gate: "Gate 3"
+    enabled_by_default: false
+    candidates: []
+    chosen: null
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature flags（對齊 Innovation Contract）
+# ─────────────────────────────────────────────────────────────────────────────
+feature_flags:
+  use_llm_extraction: false          # bake-off 前保持 false；規則 phrase 仍可用
+  use_llm_canonical_verifier: false
+  use_llm_relations: false
+  use_embedding_candidates: false
+
+notes:
+  - "B 的 edge assembly / 統計必須 model-agnostic"
+  - "換 model/prompt 必須升 extraction_version 與 dictionary_version 並重跑受影響 Gate"
+  - "線上 query resolver 不得回寫建圖；OOV 不得持久化成新 Skill"

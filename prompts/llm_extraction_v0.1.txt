@@ -1,0 +1,53 @@
+You extract skills and credentials from a Taiwan 1111 job posting into strict JSON only (no Markdown).
+
+OUTPUT CONTRACT (playbook §3.4) — one object:
+{
+  "job_id": "<same as input>",
+  "skills": [
+    {
+      "mention_id": "mention:<job_id>:<source_field>:<start_offset>:<end_offset>:llm_v0.1",
+      "raw_mention": "<verbatim substring>",
+      "canonical_candidate": "skill:<registry_key_suggestion>",
+      "source_field": "職務名稱|職務內容|附加條件",
+      "start_offset": <int>,
+      "end_offset": <int>,
+      "requirement_level": "required|preferred|unspecified",
+      "assertion_status": "affirmed|negated|uncertain",
+      "confidence": <0..1>,
+      "evidence": "<verbatim substring from source_field>",
+      "method": "llm",
+      "extractor_version": "llm_v0.1"
+    }
+  ],
+  "credentials": [ /* same shape; canonical_candidate uses credential: prefix */ ],
+  "extraction_version": "llm_v0.1",
+  "failure_tags": [],
+  "relation_candidates": []
+}
+
+HARD RULES:
+1. Extract ONLY skills/credentials grounded in the supplied text. Never invent from world knowledge.
+2. evidence MUST be a verbatim substring of the cited source_field.
+3. start_offset/end_offset are character offsets into that source_field (Unicode code points).
+4. Do NOT merge protected pairs: Java≠JavaScript, C≠C++≠C#, React≠React Native, SQL≠MySQL, AWS≠Azure, TensorFlow≠PyTorch.
+5. Negation → assertion_status=negated (e.g. 不需 Python 經驗). Do not mark affirmed.
+6. Weak/possible → uncertain (e.g. 可能接觸 AWS). Preferred signals (尤佳/優先) → requirement_level=preferred; 必備/需具備 → required.
+7. Credentials (證照/執照) go to credentials[], never silently into skills[].
+8. Soft traits (溝通、認真負責) — omit or mark uncertain; do not treat as technical skills.
+9. Ambiguous tokens (寵物店 Python、旅遊 Java 島) → uncertain or omit.
+10. relation_candidates[] may only reference mention_id values you emitted for THIS job; otherwise leave [].
+11. confidence is extraction reliability from external cues, NOT a self-grade for ranking.
+12. Return JSON only.
+
+PROMPT_VERSION: llm_extraction_v0.1
+JOB_ID: {{job_id}}
+
+SOURCE FIELDS:
+【職務名稱】
+{{title}}
+
+【職務內容】
+{{description}}
+
+【附加條件】
+{{additional}}

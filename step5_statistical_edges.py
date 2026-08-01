@@ -583,12 +583,32 @@ class StatisticalEdgeBuilder:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def load_soft_skill_blacklist(
+    path: Path | None = None,
+) -> set[str]:
+    """Load A's proposed soft-skill blacklist (canonical_id column)."""
+    path = path or (
+        Path(__file__).parent / "fixtures" / "soft_skill_blacklist_v0.1.csv"
+    )
+    if not path.exists():
+        return set()
+    ids: set[str] = set()
+    with path.open("r", encoding="utf-8") as f:
+        for row in csv_mod.DictReader(f):
+            if row.get("status") == "rejected":
+                continue
+            cid = (row.get("canonical_id") or "").strip()
+            if cid:
+                ids.add(cid)
+    return ids
+
+
 def main(extractions_path: str | None = None) -> None:
     print("=" * 60)
     print("Step 5 — Statistical Edges")
     print("=" * 60)
 
-    config = StatisticalConfig()
+    config = StatisticalConfig(soft_skill_blacklist=load_soft_skill_blacklist())
     builder = StatisticalEdgeBuilder(config)
 
     ext_path = Path(extractions_path) if extractions_path else (GRAPH_DIR / "extractions.jsonl")

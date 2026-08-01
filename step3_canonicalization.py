@@ -57,12 +57,16 @@ OUTPUT_AUDIT = GRAPH_DIR / "canonicalization_audit.csv"
 OUTPUT_MANIFEST = GRAPH_DIR / "canonicalization_manifest.json"
 
 DICTIONARY_VERSION = "v0.1"
+ALIAS_SEED_CSV = Path(__file__).parent / "fixtures" / "skill_alias_seed_v0.1.csv"
 
 # 允許的極短 registry key（語意上成立的單字／符號技能）
 SHORT_KEY_ALLOWLIST = frozenset({
     "c", "c#", "c++", "r", "go", "r語", "ai", "ui", "ux", "qa", "it",
     "pc", "os", "pr", "ae", "ps", "id", "xd", "bi", "ml", "dl", "vr", "ar",
+    "nx", "hp", "正航",  # structured high-freq short brands / ERP
 })
+
+_CJK_RE = re.compile(r"^[\u4e00-\u9fff]{2}$")
 
 # Protected pairs — 不可合併（Playbook §Step 3）
 # 注意：Node / Node.js、K8s / Kubernetes 是縮寫 alias，不是 protected pair
@@ -76,39 +80,12 @@ PROTECTED_GROUPS: list[frozenset[str]] = [
     frozenset({"node.js", "javascript"}),
 ]
 
-# alias_key (normalized) → 偏好的 canonical registry_key 候選（依序找第一個已 seed 者）
-# 對齊 repo 既有 canonicalization.DEFAULT_ALIASES，並補上常見中英混寫
-SEED_ALIAS_SPECS: list[tuple[str, str, list[str]]] = [
-    # (raw_alias, language, preferred_targets)
-    # targets 必須是 structured seed 裡真實存在的 registry_key（含資料源括號殘段）
+# Fallback alias specs if fixtures/skill_alias_seed_v0.1.csv missing
+SEED_ALIAS_SPECS_FALLBACK: list[tuple[str, str, list[str]]] = [
     ("react", "en", ["react(reactjs", "react"]),
-    ("reactjs", "en", ["react(reactjs", "react"]),
-    ("react.js", "en", ["react(reactjs", "react"]),
-    ("react_js", "en", ["react(reactjs", "react"]),
-    ("vue", "en", ["vue.js(vue/vuejs", "vue.js", "vue"]),
-    ("vuejs", "en", ["vue.js(vue/vuejs", "vue.js", "vue"]),
-    ("vue.js", "en", ["vue.js(vue/vuejs", "vue.js", "vue"]),
-    ("nodejs", "en", ["node.js(node/nodejs", "node.js", "nodejs"]),
-    ("node_js", "en", ["node.js(node/nodejs", "node.js", "nodejs"]),
-    ("node", "en", ["node.js(node/nodejs", "node.js", "nodejs"]),
-    ("node.js", "en", ["node.js(node/nodejs", "node.js"]),
-    ("typescript", "en", ["typescript", "ts"]),
-    ("aws", "en", ["amazon_web_services_(aws", "aws"]),
-    ("amazon_web_services", "en", ["amazon_web_services_(aws", "aws"]),
-    ("azure", "en", ["azure(microsoft_azure", "azure"]),
-    ("k8s", "en", ["kubernetes(k8s", "kubernetes", "k8s"]),
-    ("kubernetes", "en", ["kubernetes(k8s", "kubernetes"]),
+    ("k8s", "en", ["kubernetes(k8s", "kubernetes"]),
+    ("node", "en", ["node.js(node/nodejs", "node.js"]),
     ("js", "en", ["javascript"]),
-    ("ts", "en", ["typescript"]),
-    ("golang", "en", ["go", "golang"]),
-    ("postgres", "en", ["postgresql", "postgres"]),
-    ("postgresql", "en", ["postgresql", "postgres"]),
-    ("mssql", "en", ["ms_sql(mssql/sql_server", "sql_server", "mssql"]),
-    ("sql_server", "en", ["ms_sql(mssql/sql_server", "sql_server"]),
-    ("tf", "en", ["tensorflow"]),
-    ("torch", "en", ["pytorch"]),
-    ("scikit-learn", "en", ["scikit-learn", "sklearn"]),
-    ("sklearn", "en", ["scikit-learn", "sklearn"]),
 ]
 
 
@@ -149,18 +126,48 @@ def is_clean_registry_key(key: str) -> bool:
     """Reject obvious parse/offset garbage before seeding or accepting."""
     if not key or key == "unknown":
         return False
-    if len(key) <= 2 and key not in SHORT_KEY_ALLOWLIST:
-        return False
+    # 2-char CJK (正航) and allowlisted short Latin/symbol skills are OK
+    if len(key) <= 2:
+        if key in SHORT_KEY_ALLOWLIST or _CJK_RE.fullmatch(key):
+            pass
+        else:
+            return False
     if key[0] in ",#/:;.|\"'`、•-_+=":
         return False
     if key[-1] in ",、;:|\"'`":
         return False
-    # Truncated / mid-token fragments commonly produced by bad phrase offsets
-    if re.search(r"^,[a-z]", key) or re.search(r"^[a-z]{1,3}、", key):
+    # Only reject short Latin+顿号 fragments (e.g. "jav、"); keep real compounds
+    # like "edm、banner設計與製作" (structured 工作技能).
+    if len(key) <= 8 and (
+        re.search(r"^,[a-z]", key) or re.search(r"^[a-z]{1,3}、", key)
+    ):
         return False
     if key in {"#", "/", "ss", "gi", "jav", "wo", "n、", "t、", "u,"}:
         return False
     return True
+
+
+def load_alias_seed_specs(
+    path: Path = ALIAS_SEED_CSV,
+) -> list[tuple[str, str, list[str]]]:
+    """Load (raw_alias, language, preferred_targets[]) from versioned CSV."""
+    if not path.exists():
+        return list(SEED_ALIAS_SPECS_FALLBACK)
+    specs: list[tuple[str, str, list[str]]] = []
+    with path.open("r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            raw = (row.get("raw_alias") or row.get("alias_key") or "").strip()
+            if not raw:
+                continue
+            language = (row.get("language") or "unknown").strip()
+            targets = [
+                t.strip()
+                for t in (row.get("preferred_targets") or "").split("|")
+                if t.strip()
+            ]
+            if targets:
+                specs.append((raw, language, targets))
+    return specs or list(SEED_ALIAS_SPECS_FALLBACK)
 
 
 def _are_protected(key_a: str, key_b: str) -> bool:
@@ -289,7 +296,7 @@ class CanonicalRegistry:
 
     def apply_seed_aliases(self) -> int:
         bound = 0
-        for raw_alias, language, targets in SEED_ALIAS_SPECS:
+        for raw_alias, language, targets in load_alias_seed_specs():
             alias_key = normalize_key(raw_alias)
             target = next((t for t in targets if t in self.skills), None)
             if target is None:
