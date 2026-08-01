@@ -24,19 +24,20 @@ inclusion: auto
 
 ## 硬性約束
 
-1. **Train policy:** 所有職缺皆為 train（不需 time-based cutoff for jobs）；行為表以 6/1–6/4 切分
-2. 不得使用 test 期間 JD 建圖（違者整項可能不計分）
+1. **建圖資料範圍:** 全部職缺皆可用於建圖，不需切分 train/test（主辦方口頭確認，書面來源待補 §1.1）
+2. query/行為資料仍依 `dataset_1111.py` 切分 train/validation/test；test 期查詢/行為不得回寫圖
 3. ID 必須 deterministic：
    - `job:<職缺編號>` → `job:1370179`
    - `skill:<registry_key>` → `skill:python`
    - `occ:<CodeNo>` → `occ:140200`
    - `credential:<registry_key>` → `credential:高考護理師執照`
-4. `HAS_SKILL` 只能物化 `assertion_status=affirmed` 且 `canonicalization_status=accepted` 的 mentions
-5. Confidence 只用於 extraction accept/quarantine（threshold by method），不直接進 ranking
-6. 合併策略：**precision-first**（寧可漏併，不要誤併）
-7. test query / OOV 不回寫 graph / alias / registry / 統計量
-8. LLM 必須在建圖中有必要角色（非展示），並保留 ablation
-9. 不得捏造資料或統計數字；若不確定，停下來詢問使用者
+4. 不得擅自新增 edge type 或改 ID 規則
+5. `HAS_SKILL` 只能物化 `assertion_status=affirmed` 且 `canonicalization_status=accepted` 的 mentions
+6. Confidence 只用於 extraction accept/quarantine（threshold by method），不直接進 ranking
+7. 合併策略：**precision-first**（寧可漏併，不要誤併）
+8. test query / OOV 不回寫 graph / alias / registry / 統計量
+9. LLM 必須在建圖中有必要角色（非展示），並保留 ablation
+10. 不得捏造資料或統計數字；若不確定，停下來詢問使用者
 
 ## 介面契約
 
@@ -67,8 +68,8 @@ B 輸出 → graph/nodes.csv + edges.csv + graph_manifest.json
 
 | Gate | 條件 |
 |------|------|
-| Gate 0 | Schema + JSON + cutoff + Innovation Contract 已鎖定 ✓ |
+| Gate 0 | Schema + JSON + 建圖資料範圍（全量，來源待補）+ Innovation Contract 已鎖定 ✓ |
 | Gate 1 | Golden slice 500 jobs Step 1–4 跑通；A 的 JSONL 可被 B 原樣讀入 |
 | Gate 2 | 10k extraction + dictionary frozen；model chosen |
 | Gate 3 | Step 5–7 smoke 無 fail；DF/supernode 合理 |
-| Gate 4 | train-only + trace + ablation 可重現 |
+| Gate 4 | 建圖來源已附佐證 + trace + ablation 可重現 |

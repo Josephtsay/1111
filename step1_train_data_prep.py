@@ -41,11 +41,12 @@ GOLDEN_SLICE_SEED = 2026  # deterministic
 # Schema v0.1 frozen: timezone assumption
 TIMEZONE_ASSUMPTION = "Asia/Taipei"
 
-# All jobs are train-eligible (confirmed by team: 職缺不用切分)
-TRAIN_POLICY = "all_jobs_are_train"
+# All jobs are used for graph building — no train/test split for jobs
+# (confirmed by organizer verbally on 2026-08-01; written source pending, see Playbook §1.1)
+TRAIN_POLICY = "all_jobs_no_split"
 TRAIN_POLICY_RATIONALE = (
-    "Per team decision on 2026-08-01: 職缺.csv 全量皆為 train；"
-    "只有 user search log / 瀏覽 / 應徵三張行為表以 6/1-6/4 做 train 切分。"
+    "主辦方口頭確認全部職缺皆可用於建圖，不需切分 train/test（來源待補，見 Playbook §1.1）。"
+    "query/行為資料仍依 dataset_1111.py 切 train/validation/test。"
 )
 
 
@@ -497,14 +498,21 @@ def build_manifest(
         "schema_status": "frozen",
         "gate0_status": "conditional_pass",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "train_policy": {
+        "graph_data_scope": "all_jobs_no_split",
+        "data_scope_policy": {
             "policy": TRAIN_POLICY,
             "rationale": TRAIN_POLICY_RATIONALE,
-            "cutoff_status": "resolved",
-            "cutoff_rule": "All 職缺.csv jobs are train-eligible; no time-based cutoff for jobs",
+            "source_status": "verbal_confirmation_pending_written_record",
+            "source_note": (
+                "主辦方 2026-08-01 口頭確認全量職缺可用於建圖；"
+                "命題文件書面仍有 train-only 罰則條款。"
+                "來源待補（工作坊 Q&A / email），見 Playbook §1.1"
+            ),
             "timezone_assumption": TIMEZONE_ASSUMPTION,
-            "timezone_impact": "None for job selection (all jobs are train); only relevant for manifest audit timestamps",
+            "timezone_impact": "None for job selection; only for manifest audit timestamps",
         },
+        "full_graph_allowed": True,
+        "full_graph_blocker": "llm_extraction_throughput",
         "source_files": {
             "jobs_csv": {
                 "path": str(JOBS_CSV.resolve()),
@@ -538,8 +546,9 @@ def build_manifest(
             ).hexdigest(),
         },
         "statistics": stats,
-        "contains_post_cutoff_jd": False,
+        "contains_post_cutoff_jd": "N/A — no train/test split for jobs",
         "full_graph_allowed": True,
+        "full_graph_blocker": "llm_extraction_throughput",
         "content_hash_algorithm": "sha256(concat_ws('|', job_id, title, description, computer_skills, certifications, work_skills, additional_requirements, duty_major, duty_middle, duty_minor))",
         "id_rules": {
             "job": "job:<職缺編號>",

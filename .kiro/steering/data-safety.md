@@ -9,8 +9,10 @@ inclusion: auto
 - 不得把 `graph/`、`*.parquet`、大型 CSV、`data/raw/` 加入 git（已在 .gitignore）
 - 不得在 chat 中 echo `data/raw/` 原始資料超過 5 行 sample
 - 不得捏造資料、統計數字或假設未取得的資訊；若不確定，停下來詢問
-- 不得擅自決定需要雙人同意的事項（cutoff、模型選擇、品質門檻、Schema 變更）
+- 不得擅自決定需要雙人同意的事項（模型選擇、品質門檻、Schema 變更）
 - 不得在非結構化 mention 全部預設 `affirmed`——assertion gate 必須如實運作
+- 全量職缺可用於建圖（主辦方口頭確認），但 query/行為資料的 test 切分仍在：test 期查詢、點擊、應徵不得流入圖節點、邊、alias 或統計量
+- 「全量可用」的書面來源尚待補齊（見 Playbook §1.1）；提交前必須附上可查證依據
 
 ## Git 規範
 
