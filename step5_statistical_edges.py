@@ -585,10 +585,24 @@ class StatisticalEdgeBuilder:
 def load_soft_skill_blacklist(
     path: Path | None = None,
 ) -> set[str]:
-    """Load A's proposed soft-skill blacklist (canonical_id column)."""
-    path = path or (
-        Path(__file__).parent / "fixtures" / "soft_skill_blacklist_v0.1.csv"
-    )
+    """
+    Load A's soft-skill blacklist (contract unchanged: canonical_id + status;
+    only status == "rejected" is ignored).
+
+    Default now resolves to the highest available version of
+    fixtures/soft_skill_blacklist_v*.csv. Reason: the v0.1 file was a
+    hand-written draft whose IDs (skill:溝通 ...) match 0 mentions in the full
+    extractions — real canonical_ids come from 工作技能 / 電腦技能資料 field
+    values (e.g. skill:具備溝通協調能力). v0.2+ is data-derived by
+    step_a5_soft_skill_blacklist.py, so keeping v0.1 as the default would
+    silently apply no blacklist at all.
+    """
+    if path is None:
+        fixtures = Path(__file__).parent / "fixtures"
+        versioned = sorted(fixtures.glob("soft_skill_blacklist_v*.csv"))
+        if not versioned:
+            return set()
+        path = versioned[-1]
     if not path.exists():
         return set()
     ids: set[str] = set()

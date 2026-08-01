@@ -1,21 +1,44 @@
 # model_registry.yaml — Playbook §Model Decision Contract
 # A 維護；Gate 1 bake-off 填入指標，Gate 2 freeze chosen / fallback。
 #
-# 使用：
-#   1. python step1_train_data_prep.py          # 產生 graph/golden_slice_ids.json
-#   2. python step_a0_llm_bakeoff_prep.py       # 打包 golden prompts（不呼叫 API）
-#   3. 對 candidates 跑抽取 → 填本檔 metrics → Gate 1 review
+# 重現方式：
+#   1. python step1_train_data_prep.py            # graph/golden_slice_ids.json
+#   2. python step_a0_llm_bakeoff_prep.py         # 打包 golden prompts（不呼叫 API）
+#   3. python step_a0b_llm_bakeoff_run.py --mode mock        # 零成本驗證評分管線
+#      python step_a0b_llm_bakeoff_run.py --mode dry-run     # token / 成本預估
+#      python step_a0b_llm_bakeoff_run.py --mode live --limit 25 \
+#        --candidates cand_haiku45=us.anthropic.claude-haiku-4-5-20251001-v1:0,...
+#   4. 指標來源：graph/llm_bakeoff_v0.1/bakeoff_summary_live.json
+#
+# 狀態：Gate 1 已完成一輪實測比較；**尚未 freeze**（frozen: false，flags 全 false）。
 
-version: "v0.1-draft"
+version: "v0.2-gate1-measured"
 schema_version: "v0.1"
 frozen: false
 response_schema_version: "extraction_contract_v0.1"  # playbook §3.4
+
+provider_environment:
+  provider: bedrock
+  region: us-west-2                  # 來自 .env AWS_DEFAULT_REGION
+  api: "bedrock-runtime Converse"
+  credentials: "環境變數（.env）：AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN"
+  client: "llm_client.py（botocore SigV4 + urllib；此環境無 boto3，botocore 1.29.76 無 bedrock service model）"
+  models_visible: 112
+  active_text_models: 72
+  note: "多數 Anthropic / Nova 模型僅支援 INFERENCE_PROFILE，需用 us.* profile ID 呼叫"
+
 golden_set:
   source: "graph/golden_slice_ids.json"
   generator: "step1_train_data_prep.py"
   seed: 2026
   size: 500
+  used_in_gate1_run: 25              # 成本控制；Gate 2 前應擴大
   challenge_set: "fixtures/assertion_challenge_set_v0.1.jsonl"
+  challenge_set_labeled_items: 30    # 48 筆中有 assertion label 的題數
+  known_gap: >
+    此 25 筆子集的 phrase baseline 為 0 mentions（phrase 全量覆蓋率僅 11.79%），
+    且無人工 mention 標註 → 本輪無法產出 mention precision / recall。
+    Gate 2 前需重新分層 golden slice 或建立人工標註。
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tasks（離線建圖 vs 線上 query 分開選模型）
@@ -26,50 +49,179 @@ tasks:
     role: "Step 2B/2C LLM 補抽與 assertion（必要模組；可 ablation 關閉）"
     prompt_version: "llm_extraction_v0.1"
     prompt_path: "prompts/llm_extraction_v0.1.txt"
-    decision_gate: "Gate 1 compare → Gate 2 freeze"
+    decision_gate: "Gate 1 compare（已做） → Gate 2 freeze（未做）"
     quarantine_policy: "below method threshold OR negated/uncertain OR no evidence → quarantine"
+    measured_at: "2026-08-01"
+    metrics_source: "graph/llm_bakeoff_v0.1/bakeoff_summary_live.json"
+    metric_definitions:
+      strict_json_success_rate: "未經任何修補即為合法 JSON 的比例"
+      contract_valid_rate: "§3.4 必填欄位與 enum 全部合法的職缺比例"
+      evidence_grounded_rate: "evidence 逐字出現在所引用 source_field 的 mention 比例"
+      offset_exact_rate: "start/end offset 切出來剛好等於 raw_mention 的比例"
+      hallucinated_mention_rate: "evidence 在原文找不到的 mention 比例"
+      assertion_accuracy: "challenge set 上 assertion_status 正確率（唯一有 ground truth 的指標）"
+      mention_precision_recall: "本輪不可得（無人工標註）—— 不得填入估計值"
+
     candidates:
-      - candidate_id: cand_a
-        provider: null          # e.g. bedrock / openai / azure_openai
-        model_id: null
-        model_revision: null
-        decoding:
-          temperature: 0.0
-          max_tokens: 4096
-          seed: 2026
+      - candidate_id: cand_haiku45
+        provider: bedrock
+        model_id: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        model_revision: "20251001"
+        decoding: {temperature: 0.0, max_tokens: 4096, seed: null}
         metrics:
-          strict_json_success_rate: null
+          strict_json_success_rate: 0.0        # 100% 包在 code fence 中
+          contract_valid_rate: 1.0
+          evidence_grounded_rate: 0.9771
+          offset_exact_rate: 0.0351
+          hallucinated_mention_rate: 0.0229
+          credential_routing_ok_rate: 1.0
+          protected_pair_violations: 0
+          assertion_accuracy: 0.8
+          requirement_accuracy: 0.8
           mention_precision: null
           mention_recall: null
-          assertion_accuracy: null
-          avg_cost_usd_per_job: null
-          throughput_jobs_per_hour: null
-          latency_p50_ms: null
-          latency_p95_ms: null
-        status: pending
-      - candidate_id: cand_b
-        provider: null
-        model_id: null
-        model_revision: null
-        decoding:
-          temperature: 0.0
-          max_tokens: 4096
-          seed: 2026
+          avg_input_tokens: 980.8
+          avg_output_tokens: 1384.6
+          avg_cost_usd_per_job: null           # 見 cost_note
+          throughput_jobs_per_hour: 365.7
+          latency_p50_ms: 8541.6
+          latency_p95_ms: 15567.1
+          unparseable_json: 0
+        status: measured_gate1
+        assessment: >
+          契約合規最好（contract_valid 1.0、零 unparseable、零 protected-pair 違規），
+          grounding 0.977，assertion 0.80 為四者最高但仍低於 0.85 門檻；吞吐最高。
+          Gate 1 建議列為 preferred 候選。
+
+      - candidate_id: cand_sonnet45
+        provider: bedrock
+        model_id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        model_revision: "20250929"
+        decoding: {temperature: 0.0, max_tokens: 4096, seed: null}
         metrics:
-          strict_json_success_rate: null
+          strict_json_success_rate: 0.0
+          contract_valid_rate: 0.88
+          evidence_grounded_rate: 1.0          # 唯一零幻覺
+          offset_exact_rate: 0.0497
+          hallucinated_mention_rate: 0.0
+          credential_routing_ok_rate: 1.0
+          protected_pair_violations: 0
+          assertion_accuracy: 0.7667
+          requirement_accuracy: 1.0
           mention_precision: null
           mention_recall: null
-          assertion_accuracy: null
+          avg_input_tokens: 980.8
+          avg_output_tokens: 1726.1
           avg_cost_usd_per_job: null
-          throughput_jobs_per_hour: null
-          latency_p50_ms: null
-          latency_p95_ms: null
-        status: pending
-    chosen: null
-    fallback: null
+          throughput_jobs_per_hour: 173.6
+          latency_p50_ms: 13176.0
+          latency_p95_ms: 32430.3
+          unparseable_json: 3                  # 輸出過長，疑似 max_tokens 截斷
+        status: measured_gate1
+        assessment: >
+          grounding 完美（1.0）、requirement_accuracy 1.0，但 3/25 因輸出過長無法解析，
+          吞吐僅 haiku 一半、p95 32s。提高 max_tokens 重測後可作為品質優先 fallback。
+
+      - candidate_id: cand_nova_lite
+        provider: bedrock
+        model_id: "us.amazon.nova-lite-v1:0"
+        model_revision: "v1:0"
+        decoding: {temperature: 0.0, max_tokens: 4096, seed: null}
+        metrics:
+          strict_json_success_rate: 0.0
+          contract_valid_rate: 0.92
+          evidence_grounded_rate: 0.8953
+          offset_exact_rate: 0.0
+          hallucinated_mention_rate: 0.1047    # 最高幻覺率
+          credential_routing_ok_rate: 1.0
+          protected_pair_violations: 0
+          assertion_accuracy: 0.6              # 最低
+          requirement_accuracy: 0.8667
+          mention_precision: null
+          mention_recall: null
+          avg_input_tokens: 929.2
+          avg_output_tokens: 1414.6
+          avg_cost_usd_per_job: null
+          throughput_jobs_per_hour: 297.6
+          latency_p50_ms: 8200.7
+          latency_p95_ms: 17938.7
+          unparseable_json: 0
+        status: measured_gate1
+        assessment: >
+          token 成本低、速度快，但 10.5% mention 的 evidence 在原文找不到、assertion 僅 0.60。
+          依 precision-first 政策不建議用於建圖抽取。
+
+      - candidate_id: cand_qwen3_32b
+        provider: bedrock
+        model_id: "qwen.qwen3-32b-v1:0"
+        model_revision: "v1:0"
+        decoding: {temperature: 0.0, max_tokens: 4096, seed: null}
+        metrics:
+          strict_json_success_rate: 0.2        # 唯一有時不加 fence
+          contract_valid_rate: 1.0
+          evidence_grounded_rate: 0.9618
+          offset_exact_rate: 0.0
+          hallucinated_mention_rate: 0.0382
+          credential_routing_ok_rate: 1.0
+          protected_pair_violations: 0
+          assertion_accuracy: 0.6667
+          requirement_accuracy: 0.8667
+          mention_precision: null
+          mention_recall: null
+          avg_input_tokens: 794.5
+          avg_output_tokens: 945.8
+          avg_cost_usd_per_job: null
+          throughput_jobs_per_hour: 259.4
+          latency_p50_ms: 11657.6
+          latency_p95_ms: 24092.5
+          unparseable_json: 0
+        status: measured_gate1
+        assessment: >
+          契約合規良好、輸出最精簡（tokens 最少），但抽取量也最少（120 mentions），
+          assertion 0.667。可作成本敏感備選，需人工抽查是否漏抽。
+
+    # Gate 1 結論：建議值，待 Gate 2 雙人 sign-off 才寫入 chosen / fallback
+    gate1_recommendation:
+      preferred: cand_haiku45
+      fallback: cand_sonnet45
+      not_recommended: [cand_nova_lite]
+      blocking_issues:
+        - id: strict_json_zero
+          detail: >
+            strict_json_success_rate 幾乎全為 0（Claude 100% 用 code fence 包住 JSON）。
+            這是 prompt 缺陷而非模型缺陷：prompt 寫了「no Markdown」但沒有明確禁止 code fence。
+          action: "升 prompt 至 llm_extraction_v0.2 明確禁止 code fence 後重測"
+        - id: offset_unusable
+          detail: >
+            offset_exact_rate 全部 <= 0.05（nova / qwen 為 0），
+            即 LLM 自報的字元 offset 幾乎全錯，而 §3.4 對非結構化 mention 建議必填 offset。
+          action: >
+            LLM 抽取管線不得信任模型 offset；必須用 evidence 字串在 source_field 上
+            deterministic 重新定位，定位失敗者 quarantine。
+        - id: assertion_below_threshold
+          detail: >
+            extraction_config.assertion_challenge.minimum_pass_rate = 0.85，
+            但四個模型 assertion_accuracy 僅 0.60–0.80，全部未達標；
+            現有規則式偵測器 rules_v0.1 在同一份 challenge set 上為 1.0。
+          action: >
+            assertion_status 繼續由規則偵測器負責，LLM 只用於補抽 mention；
+            若要讓 LLM 決定 assertion，須先達 0.85，否則其 mention 一律 quarantine。
+        - id: conditional_category_weak
+          detail: >
+            錯誤集中在 conditional 類（如「若熟悉 Kubernetes 佳」）：
+            haiku 9/12、sonnet 6/12、nova 3/12、qwen 5/12 正確。
+          action: "prompt v0.2 補強條件語氣示例；challenge set 擴充此類題目"
+      cost_note: >
+        avg_cost_usd_per_job 全部留 null。本輪已量到實際 token 數，但未取得此帳號的 rate card。
+        成本 = (avg_input_tokens/1000 * price_in) + (avg_output_tokens/1000 * price_out)；
+        price 需由帳號擁有者依 https://aws.amazon.com/bedrock/pricing/ 的 us-west-2
+        on-demand 費率填入（區域、batch、承諾折扣都會影響）。此處不填第三方轉述數字。
+
+    chosen: null        # Gate 2 才填
+    fallback: null      # Gate 2 才填
     retry:
       max_attempts: 2
-      repair: limited_json_repair_only
+      repair: limited_json_repair_only   # 去 code fence / 取第一個 {...}；不做語意修補
 
   canonical_verifier:
     task_name: canonical_verifier
@@ -80,6 +232,9 @@ tasks:
     candidates: []
     chosen: null
     fallback: null
+    note: >
+      本輪未測。可沿用 unstructured_extraction 的候選清單，
+      但必須另外量 protected-pair 錯誤率（Java/JavaScript、C/C++/C# 等），且 verifier 必須能 abstain。
 
   semantic_relation:
     task_name: semantic_relation
@@ -90,11 +245,19 @@ tasks:
     candidates: []
     chosen: null
 
+  embedding_candidates:
+    task_name: embedding_candidates
+    role: "Step 3 / 5C 候選召回（不直接決定入圖）"
+    decision_gate: "Gate 1–2"
+    candidates: []
+    chosen: null
+    note: "尚未評估；us-west-2 可見 amazon.rerank-v1:0 / cohere.rerank-v3-5:0 可作候選"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Feature flags（對齊 Innovation Contract）
 # ─────────────────────────────────────────────────────────────────────────────
 feature_flags:
-  use_llm_extraction: false          # bake-off 前保持 false；規則 phrase 仍可用
+  use_llm_extraction: false          # Gate 1 未過門檻（見 blocking_issues），維持 false
   use_llm_canonical_verifier: false
   use_llm_relations: false
   use_embedding_candidates: false
@@ -103,3 +266,5 @@ notes:
   - "B 的 edge assembly / 統計必須 model-agnostic"
   - "換 model/prompt 必須升 extraction_version 與 dictionary_version 並重跑受影響 Gate"
   - "線上 query resolver 不得回寫建圖；OOV 不得持久化成新 Skill"
+  - "本輪 bake-off 未產生任何進圖 artifact；LLM 輸出未寫入 extractions.jsonl"
+  - "憑證只從環境變數讀取，未寫入任何 artifact 或 manifest"

@@ -1,0 +1,2 @@
+canonical_id,canonical_name,reason,status,category,job_frequency,eligible_job_frequency,distinct_occupation_major,occupation_major_entropy_norm,max_occupation_salience,soft_dominance_ratio,source_fields,policy_version,notes
+skill:具備溝通協調能力,具備溝通協調能力,generic_soft_skill,blocked,communication,1040,1037,20,0.8827,0.022,1.0,工作技能:408;職務內容:331;附加條件:303,soft_skill_blacklist_policy_v0.2,dual-signal: lexical=communication; DF=1040>=50; major_entropy=0.8827; distinct_major=20; max_salience=0.022
