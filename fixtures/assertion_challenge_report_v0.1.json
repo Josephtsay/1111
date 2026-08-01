@@ -1,0 +1,67 @@
+{
+  "step": "step2c_assertion_challenge",
+  "challenge_set_version": "v0.1",
+  "challenge_set_path": "/Users/chenyijen/development/1111/fixtures/assertion_challenge_set_v0.1.jsonl",
+  "created_at": "2026-08-01T09:34:00.359367+00:00",
+  "detector_version": "rules_v0.1",
+  "thresholds": {
+    "minimum_assertion_accuracy": 0.85,
+    "minimum_protected_pair_accuracy": 1.0
+  },
+  "metrics": {
+    "assertion_accuracy": 1.0,
+    "assertion_correct": 30,
+    "assertion_total": 30,
+    "requirement_accuracy": 1.0,
+    "requirement_correct": 30,
+    "requirement_total": 30,
+    "protected_pair_accuracy": 1.0,
+    "protected_pair_error": 0.0,
+    "protected_correct": 13,
+    "protected_total": 13,
+    "abbreviation_accuracy": 1.0,
+    "abbreviation_correct": 6,
+    "abbreviation_total": 6
+  },
+  "by_category": {
+    "abbreviation": {
+      "assertion_pass": 1,
+      "requirement_pass": 1,
+      "abbr_pass": 6
+    },
+    "conditional": {
+      "assertion_pass": 12,
+      "requirement_pass": 12
+    },
+    "confusion": {
+      "assertion_pass": 5,
+      "requirement_pass": 5
+    },
+    "negation": {
+      "assertion_pass": 12,
+      "requirement_pass": 12
+    },
+    "protected_pairs": {
+      "protected_pass": 13
+    }
+  },
+  "gate": "pass",
+  "policy_recommendation": "assertion detector meets minimum; phrase mentions may keep detector-assigned assertion_status (negated/uncertain not materialized by B)",
+  "known_limitations": [
+    "規則偵測器無法可靠處理語意混淆（寵物 Python、旅遊 Java 島）",
+    "requirement cue「佳」可能在少數無相關上下文誤觸發",
+    "abbreviation 解析依賴 Step 3 alias/registry；缺 seed 時會 fail",
+    "結構化欄位仍預設 affirmed/unspecified（不跑否定窗口）"
+  ],
+  "confusion_assertion_failures": 0,
+  "failure_count": 0,
+  "failures": [],
+  "challenge_count": 48,
+  "category_counts": {
+    "negation": 12,
+    "conditional": 12,
+    "protected_pairs": 13,
+    "abbreviation": 6,
+    "confusion": 5
+  }
+}

@@ -9,8 +9,7 @@ Playbook: docs/SKILL_GRAPH_PLAYBOOK.md §2B
 規則：
 - method = "phrase"
 - confidence = 0.90 (phrase match, not structured; threshold TBD at Gate 1)
-- assertion_status = "affirmed" (預設；Step 2C 的否定偵測會在後續覆寫)
-- requirement_level = "unspecified" (非結構化欄位預設；後續可用規則升級為 preferred)
+- assertion_status / requirement_level：由 assertion_detection（Step 2C 規則）依原文窗口判定
 - evidence = 原文中匹配到的片段 (verbatim substring)
 - start_offset / end_offset = 原文中的位置 (character offset in source_field text)
 - 同一 (job, skill) 多次出現保留全部 mentions（不在抽取階段刪除）
@@ -32,6 +31,8 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+
+from assertion_detection import detect_assertion_and_requirement
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -290,6 +291,13 @@ def extract_phrase_for_job(
             canonical = meta["canonical_candidate"]
             is_credential = "專業證照" in meta.get("source_fields", "")
 
+            # Step 2C：用完整欄位文本做否定／加分／必備判定（非僅 evidence）
+            tone = detect_assertion_and_requirement(
+                raw_text,
+                evidence,
+                source_field=source_field_name,
+            )
+
             mention = {
                 "mention_id": _mention_id(
                     job_id, source_field_name, orig_start, orig_end, EXTRACTOR_VERSION
@@ -299,8 +307,8 @@ def extract_phrase_for_job(
                 "source_field": source_field_name,
                 "start_offset": orig_start,
                 "end_offset": orig_end,
-                "requirement_level": "unspecified",
-                "assertion_status": "affirmed",
+                "requirement_level": tone["requirement_level"],
+                "assertion_status": tone["assertion_status"],
                 "confidence": PHRASE_CONFIDENCE,
                 "evidence": evidence,
                 "method": "phrase",
@@ -448,11 +456,11 @@ def run_phrase_extraction(
             "normalize_alignment_map": True,
         },
         "known_limitations": [
-            "assertion_status 全部預設 affirmed（否定偵測留待後處理或 LLM）",
-            "requirement_level 預設 unspecified（preferred/required 判定留待後處理）",
+            "assertion/requirement 由 rules_v0.1 判定；語意混淆（寵物 Python 等）仍可能誤判",
             "lexicon 來自結構化欄位統計，非結構化文字中的 OOV 技能不在涵蓋範圍",
             "offsets 經 NFKC/casefold/空白壓縮對齊映射；對齊失敗的命中會丟棄而非輸出壞 evidence",
         ],
+        "assertion_detector": "rules_v0.1",
     }
     OUTPUT_MANIFEST.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
