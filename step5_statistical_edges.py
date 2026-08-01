@@ -17,6 +17,7 @@ Key rules:
 
 from __future__ import annotations
 
+import csv as csv_mod
 import json
 import math
 from collections import Counter, defaultdict
@@ -468,7 +469,6 @@ class StatisticalEdgeBuilder:
                 self.total_jobs_in_graph = row[0] if row else 0
 
             if hier_path.exists():
-                import csv as csv_mod
                 with hier_path.open("r", encoding="utf-8") as f:
                     reader = csv_mod.DictReader(f)
                     self.hierarchy = [
@@ -514,7 +514,6 @@ class StatisticalEdgeBuilder:
 
         # CO_OCCURS_WITH
         co_path = out / "co_occurs_edges.csv"
-        import csv as csv_mod
         with co_path.open("w", encoding="utf-8", newline="") as f:
             fieldnames = [
                 "edge_type", "source_id", "target_id",
