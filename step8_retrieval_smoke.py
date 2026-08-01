@@ -15,10 +15,16 @@ Smoke queries (Playbook recommended):
 - reactjs (alias)
 - k8s (abbreviation)
 - Python 資料分析 (multi-skill)
+
+CLI:
+  python step8_retrieval_smoke.py [--use-llm-classification] [--no-graph] [--blacklist PATH]
+                                  [--eval] [--eval-split test] [--eval-limit N]
+                                  [--run-id RUN_ID]
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import time
@@ -28,6 +34,93 @@ from pathlib import Path
 from typing import Any
 
 GRAPH_DIR = Path(__file__).parent / "graph"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Config (replaces hard-coded feature_flags)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Step8Config:
+    """Feature flags and evaluation settings configurable via CLI."""
+
+    use_graph: bool = True
+    use_llm_extraction: bool = False
+    use_llm_classification: bool = False
+    use_llm_relations: bool = False
+    use_adaptive_traversal: bool = False
+    blacklist_path: Path | None = None
+    run_eval: bool = False
+    eval_split: str = "test"
+    eval_limit: int | None = None
+    run_id: str = ""
+
+    def feature_flags_dict(self) -> dict[str, bool]:
+        return {
+            "use_graph": self.use_graph,
+            "use_llm_extraction": self.use_llm_extraction,
+            "use_llm_classification": self.use_llm_classification,
+            "use_llm_relations": self.use_llm_relations,
+            "use_adaptive_traversal": self.use_adaptive_traversal,
+        }
+
+
+def parse_step8_args(argv: list[str] | None = None) -> Step8Config:
+    parser = argparse.ArgumentParser(description="Step 8 — Retrieval Smoke Test + Evaluation")
+    parser.add_argument(
+        "--use-llm-classification",
+        action="store_true",
+        default=False,
+        help="Enable LLM skill classification flag in manifest",
+    )
+    parser.add_argument(
+        "--no-graph",
+        action="store_true",
+        default=False,
+        help="Disable graph traversal (for B0 baseline: BM25-only)",
+    )
+    parser.add_argument(
+        "--blacklist",
+        type=Path,
+        default=None,
+        help="Path to soft_skill_blacklist CSV (overrides auto-detection)",
+    )
+    parser.add_argument(
+        "--eval",
+        action="store_true",
+        default=False,
+        help="Run full evaluation with relevance labels (NDCG/MRR/Hit metrics)",
+    )
+    parser.add_argument(
+        "--eval-split",
+        type=str,
+        default="test",
+        choices=["train", "validation", "test"],
+        help="Which data split to evaluate on (default: test)",
+    )
+    parser.add_argument(
+        "--eval-limit",
+        type=int,
+        default=None,
+        help="Limit number of evaluation queries (for quick iterations)",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default="",
+        help="Identifier for this ablation run (e.g. B0, G1, G2)",
+    )
+    args = parser.parse_args(argv)
+    return Step8Config(
+        use_graph=not args.no_graph,
+        use_llm_classification=args.use_llm_classification,
+        blacklist_path=args.blacklist,
+        run_eval=args.eval,
+        eval_split=args.eval_split,
+        eval_limit=args.eval_limit,
+        run_id=args.run_id,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -528,10 +621,520 @@ SMOKE_QUERIES = [
 ]
 
 
-def main() -> None:
+# ─────────────────────────────────────────────────────────────────────────────
+# Evaluation harness (P2.3: metrics.py integration)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _load_eval_labels(split: str, limit: int | None = None) -> tuple[Any, Any]:
+    """
+    Load relevance labels from dataset_1111 prepared artifacts.
+
+    Uses browse (relevance=1) and apply (relevance=2) as graded relevance.
+    Returns (queries_df, labels_df) from the specified split.
+    """
+    import duckdb as _duckdb
+
+    dataset_dir = Path(__file__).parent / "data" / "raw"
+    output_dir = Path(__file__).parent / "graph" / "eval_dataset"
+
+    # Check if prepared artifacts exist; if not, prepare them
+    labels_path = output_dir / "labels.parquet"
+    queries_path = output_dir / "labeled_queries.parquet"
+
+    if not labels_path.exists() or not queries_path.exists():
+        print("  Preparing evaluation dataset (first run)...")
+        _prepare_eval_dataset_inline(dataset_dir, output_dir)
+        print("  Dataset prepared.")
+
+    if not labels_path.exists():
+        print("  ⚠ Labels not available, cannot run evaluation")
+        import pandas as _pd
+        return _pd.DataFrame(), _pd.DataFrame()
+
+    con = _duckdb.connect(":memory:")
+    try:
+        queries_sql = f"""
+            SELECT query_id, query, query_time
+            FROM read_parquet('{queries_path.resolve().as_posix()}')
+            WHERE data_split = '{split}'
+        """
+        if limit:
+            queries_sql += f" LIMIT {limit}"
+
+        queries = con.execute(queries_sql).fetchdf()
+
+        if queries.empty:
+            return queries, queries.iloc[:0]
+
+        query_ids = queries["query_id"].tolist()
+        placeholders = ", ".join(f"'{qid}'" for qid in query_ids)
+
+        labels = con.execute(f"""
+            SELECT query_id, job_id, relevance, original_rank
+            FROM read_parquet('{labels_path.resolve().as_posix()}')
+            WHERE query_id IN ({placeholders})
+        """).fetchdf()
+
+        return queries, labels
+    finally:
+        con.close()
+
+
+def _prepare_eval_dataset_inline(dataset_dir: Path, output_dir: Path) -> None:
+    """Prepare eval dataset directly with DuckDB (avoids relative-import issues)."""
+    import csv as _csv
+    import duckdb as _duckdb
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    con = _duckdb.connect(":memory:")
+    con.execute("SET threads=4")
+    con.execute("SET memory_limit='8GB'")
+
+    # Find CSVs by header signature
+    csv_files = sorted(dataset_dir.glob("*.csv"))
+    search_file = jobs_file = browse_file = apply_file = None
+
+    for f in csv_files:
+        with f.open("r", encoding="utf-8-sig") as fh:
+            try:
+                header = next(_csv.reader(fh))
+            except StopIteration:
+                continue
+            cols = set(header)
+            if {"talentNo", "ks", "search_time", "empStr"} <= cols:
+                search_file = f
+            elif {"organNo", "employeeNo", "dateIn", "talentNo"} <= cols:
+                browse_file = f
+            elif {"LogTitle", "empNo", "talentNo", "datein"} <= cols:
+                apply_file = f
+            elif "職缺編號" in cols and "職務名稱" in cols:
+                jobs_file = f
+
+    if not all([search_file, jobs_file, browse_file, apply_file]):
+        print("  ⚠ Cannot find required CSVs for eval dataset")
+        con.close()
+        return
+
+    def sql_path(p: Path) -> str:
+        return p.resolve().as_posix().replace("'", "''")
+
+    try:
+        train_end = "2026-06-05T00:00:00"
+        validation_end = "2026-06-06T00:00:00"
+
+        con.execute(f"""
+            CREATE TEMP TABLE raw_search AS
+            SELECT * FROM read_csv('{sql_path(search_file)}',
+                header=true, all_varchar=true, strict_mode=false,
+                null_padding=true, parallel=false)
+        """)
+        con.execute(f"""
+            CREATE TEMP TABLE raw_browse AS
+            SELECT * FROM read_csv('{sql_path(browse_file)}',
+                header=true, all_varchar=true, strict_mode=false)
+        """)
+        con.execute(f"""
+            CREATE TEMP TABLE raw_apply AS
+            SELECT * FROM read_csv('{sql_path(apply_file)}',
+                header=true, all_varchar=true, strict_mode=false)
+        """)
+
+        # Build queries with splits
+        con.execute(f"""
+            CREATE TEMP TABLE queries_internal AS
+            WITH typed AS (
+                SELECT
+                    row_number() OVER () AS source_row,
+                    CASE WHEN trim(coalesce(talentNo, '')) IN ('', '0') THEN NULL
+                         ELSE trim(talentNo) END AS talent_key,
+                    trim(coalesce(ks, '')) AS query,
+                    trim(coalesce(empStr, '')) AS exposed_jobs,
+                    try_cast(search_time AS TIMESTAMP) AS query_time
+                FROM raw_search
+            ),
+            identified AS (
+                SELECT
+                    'q_' || substr(md5(concat_ws('|',
+                        cast(source_row AS VARCHAR),
+                        coalesce(talent_key, 'anonymous'),
+                        cast(query_time AS VARCHAR), query
+                    )), 1, 20) AS query_id,
+                    *
+                FROM typed
+                WHERE query_time IS NOT NULL AND query <> ''
+            )
+            SELECT *,
+                CASE WHEN query_time < TIMESTAMP '{train_end}' THEN 'train'
+                     WHEN query_time < TIMESTAMP '{validation_end}' THEN 'validation'
+                     ELSE 'test' END AS data_split
+            FROM identified
+        """)
+
+        # Attribution: browse within 60min, apply within 24h
+        con.execute("""
+            CREATE TEMP TABLE browse_events AS
+            SELECT trim(talentNo) AS talent_key,
+                   trim(employeeNo) AS job_id,
+                   try_cast(dateIn AS TIMESTAMP) AS event_time
+            FROM raw_browse
+            WHERE trim(coalesce(talentNo, '')) NOT IN ('', '0')
+              AND trim(coalesce(employeeNo, '')) <> ''
+              AND try_cast(dateIn AS TIMESTAMP) IS NOT NULL
+        """)
+        con.execute("""
+            CREATE TEMP TABLE apply_events AS
+            SELECT trim(talentNo) AS talent_key,
+                   trim(empNo) AS job_id,
+                   try_cast(datein AS TIMESTAMP) AS event_time
+            FROM raw_apply
+            WHERE trim(coalesce(talentNo, '')) NOT IN ('', '0')
+              AND trim(coalesce(empNo, '')) <> ''
+              AND try_cast(datein AS TIMESTAMP) IS NOT NULL
+        """)
+
+        con.execute("""
+            CREATE TEMP TABLE attributed_browse AS
+            SELECT q.query_id, b.job_id, b.event_time, q.query_time
+            FROM browse_events b
+            ASOF JOIN queries_internal q
+              ON b.talent_key = q.talent_key AND b.event_time >= q.query_time
+            WHERE b.event_time <= q.query_time + INTERVAL 60 MINUTE
+              AND list_contains(str_split(q.exposed_jobs, ','), b.job_id)
+        """)
+        con.execute("""
+            CREATE TEMP TABLE attributed_apply AS
+            SELECT q.query_id, a.job_id, a.event_time, q.query_time
+            FROM apply_events a
+            ASOF JOIN queries_internal q
+              ON a.talent_key = q.talent_key AND a.event_time >= q.query_time
+            WHERE a.event_time <= q.query_time + INTERVAL 24 HOUR
+              AND list_contains(str_split(q.exposed_jobs, ','), a.job_id)
+        """)
+
+        con.execute("""
+            CREATE TEMP TABLE positive_labels AS
+            SELECT query_id, job_id,
+                   max(relevance) AS relevance,
+                   max(viewed) AS viewed,
+                   max(applied) AS applied
+            FROM (
+                SELECT query_id, job_id, 1 AS relevance, 1 AS viewed, 0 AS applied
+                FROM attributed_browse
+                UNION ALL
+                SELECT query_id, job_id, 2 AS relevance, 0 AS viewed, 1 AS applied
+                FROM attributed_apply
+            ) GROUP BY query_id, job_id
+        """)
+
+        # Build candidate_labels (exposures + positives, capped negatives)
+        con.execute("""
+            CREATE TEMP TABLE candidate_labels AS
+            WITH exposures AS (
+                SELECT q.query_id, trim(exposed.job_id) AS job_id,
+                       cast(exposed.original_rank AS INTEGER) AS original_rank,
+                       q.data_split
+                FROM queries_internal q,
+                UNNEST(str_split(q.exposed_jobs, ','))
+                    WITH ORDINALITY AS exposed(job_id, original_rank)
+                WHERE trim(exposed.job_id) <> ''
+                  AND q.query_id IN (SELECT DISTINCT query_id FROM positive_labels)
+            ),
+            labeled AS (
+                SELECT e.query_id, e.job_id,
+                       coalesce(p.relevance, 0) AS relevance,
+                       e.original_rank, e.data_split,
+                       coalesce(p.viewed, 0) AS viewed,
+                       coalesce(p.applied, 0) AS applied
+                FROM exposures e
+                LEFT JOIN positive_labels p
+                  ON e.query_id = p.query_id AND e.job_id = p.job_id
+            ),
+            numbered AS (
+                SELECT *,
+                    sum(CASE WHEN relevance = 0 THEN 1 ELSE 0 END)
+                    OVER (PARTITION BY query_id ORDER BY original_rank
+                          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                    AS negative_ordinal
+                FROM labeled
+            )
+            SELECT query_id, job_id, relevance, original_rank, data_split, viewed, applied
+            FROM numbered
+            WHERE relevance > 0 OR negative_ordinal <= 20
+        """)
+
+        # Export to parquet
+        labels_out = output_dir / "labels.parquet"
+        queries_out = output_dir / "labeled_queries.parquet"
+
+        con.execute(f"""
+            COPY (SELECT * FROM candidate_labels ORDER BY query_id, original_rank)
+            TO '{sql_path(labels_out)}' (FORMAT PARQUET, COMPRESSION ZSTD)
+        """)
+        con.execute(f"""
+            COPY (
+                SELECT DISTINCT q.query_id, q.query,
+                       cast(q.query_time AS VARCHAR) AS query_time,
+                       q.data_split
+                FROM queries_internal q
+                JOIN candidate_labels l USING (query_id)
+                ORDER BY q.query_time, q.query_id
+            ) TO '{sql_path(queries_out)}' (FORMAT PARQUET, COMPRESSION ZSTD)
+        """)
+
+        # Report
+        stats = con.execute("""
+            SELECT count(DISTINCT query_id) AS queries,
+                   count(*) AS labels,
+                   sum(CASE WHEN relevance > 0 THEN 1 ELSE 0 END) AS positives
+            FROM candidate_labels
+        """).fetchone()
+        print(f"    Queries with labels: {stats[0]:,}, total labels: {stats[1]:,}, positives: {stats[2]:,}")
+
+    except Exception as e:
+        print(f"  ⚠ Dataset preparation failed: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        con.close()
+
+
+def _bm25_score(query: str, title: str, requirements: str) -> float:
+    """Simple BM25-like term overlap scoring for baseline."""
+    import unicodedata
+    import re
+
+    def tokenize(text: str) -> set[str]:
+        text = unicodedata.normalize("NFKC", text).casefold()
+        tokens = re.findall(r"[a-z0-9\u4e00-\u9fff\u3400-\u4dbf]+", text)
+        return set(tokens)
+
+    query_tokens = tokenize(query)
+    if not query_tokens:
+        return 0.0
+    doc_tokens = tokenize(title + " " + requirements)
+    overlap = query_tokens & doc_tokens
+    return len(overlap) / len(query_tokens)
+
+
+def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
+    """
+    Full-retrieval evaluation: for each query, retrieve top-K jobs from the
+    entire graph (or BM25 index), then check how many of the user's actual
+    browsed/applied jobs appear in the retrieved set.
+
+    This measures the graph's ability to RECALL relevant jobs, not just re-rank
+    an existing exposure list.
+    """
+    import pandas as pd
+    from metrics import ndcg_at_k, reciprocal_rank, hit_at_k, evaluate_rankings
+
+    print("\n" + "=" * 60)
+    print("EVALUATION HARNESS (full retrieval)")
+    print("=" * 60)
+    print(f"  Split: {config.eval_split}")
+    print(f"  Limit: {config.eval_limit or 'all'}")
+    print(f"  Mode: {'graph + BM25 hybrid' if config.use_graph else 'baseline (BM25-only)'}")
+
+    queries_df, labels_df = _load_eval_labels(config.eval_split, config.eval_limit)
+    if queries_df.empty:
+        print("  ⚠ No queries found for this split!")
+        return {"error": "no_queries", "split": config.eval_split}
+
+    print(f"  Queries loaded: {len(queries_df):,}")
+    print(f"  Labels loaded: {len(labels_df):,}")
+
+    # Build relevance lookup: query_id → {job_id: relevance}
+    relevance_lookup: dict[str, dict[str, int]] = {}
+    for _, row in labels_df.iterrows():
+        qid = row["query_id"]
+        if qid not in relevance_lookup:
+            relevance_lookup[qid] = {}
+        relevance_lookup[qid][str(row["job_id"])] = int(row["relevance"])
+
+    # Build BM25 inverted index (term → set of job_ids with that term)
+    import duckdb as _duckdb
+    import unicodedata
+    import re
+
+    TOP_K = 50  # retrieve this many per query
+
+    def tokenize(text: str) -> set[str]:
+        text = unicodedata.normalize("NFKC", text).casefold()
+        return set(re.findall(r"[a-z0-9\u4e00-\u9fff\u3400-\u4dbf]+", text))
+
+    print("  Building BM25 inverted index...")
+    t_idx = time.time()
+    train_jobs_path = GRAPH_DIR / "train_jobs.parquet"
+    inverted: dict[str, set[str]] = {}  # token → set of job_ids
+    job_token_counts: dict[str, int] = {}  # job_id → number of unique tokens
+
+    con = _duckdb.connect(":memory:")
+    try:
+        rows = con.execute(f"""
+            SELECT job_id, title,
+                   concat_ws(' ', computer_skills, work_skills,
+                             certifications, additional_requirements) AS requirements
+            FROM read_parquet('{train_jobs_path.resolve().as_posix()}')
+        """).fetchall()
+    finally:
+        con.close()
+
+    for job_id, title, requirements in rows:
+        jid = str(job_id)
+        tokens = tokenize((title or "") + " " + (requirements or ""))
+        job_token_counts[jid] = len(tokens)
+        for tok in tokens:
+            if tok not in inverted:
+                inverted[tok] = set()
+            inverted[tok].add(jid)
+
+    print(f"  Index built: {len(inverted):,} terms, {len(job_token_counts):,} jobs in {time.time()-t_idx:.1f}s")
+
+    def bm25_retrieve(query: str, top_k: int = TOP_K) -> list[tuple[str, float]]:
+        """Retrieve top-K jobs by BM25-like scoring from inverted index."""
+        query_tokens = tokenize(query)
+        if not query_tokens:
+            return []
+        # Score = sum of IDF-weighted term hits
+        import math
+        N = len(job_token_counts)
+        scores: dict[str, float] = {}
+        for tok in query_tokens:
+            posting = inverted.get(tok)
+            if not posting:
+                continue
+            idf = math.log((N - len(posting) + 0.5) / (len(posting) + 0.5) + 1.0)
+            for jid in posting:
+                scores[jid] = scores.get(jid, 0.0) + idf
+        # Normalize by query length
+        qlen = len(query_tokens)
+        ranked = sorted(scores.items(), key=lambda x: -x[1])[:top_k]
+        return [(jid, score / qlen) for jid, score in ranked]
+
+    # Score each query via full retrieval
+    ranking_rows: list[dict] = []
+    t0 = time.time()
+    query_count = 0
+
+    for _, qrow in queries_df.iterrows():
+        query_id = qrow["query_id"]
+        query_text = qrow["query"]
+
+        rel_map = relevance_lookup.get(query_id, {})
+        if not rel_map:
+            continue
+
+        retrieved: dict[str, float] = {}  # job_id → score
+
+        if config.use_graph:
+            # Full graph traversal: returns top-K from entire graph
+            result = traverse_and_rank(query_text, index, top_k=TOP_K)
+            for job in result.top_jobs:
+                jid = job["job_id"].removeprefix("job:")
+                retrieved[jid] = job["score"]
+
+            # Also get BM25 candidates and merge (hybrid)
+            bm25_results = bm25_retrieve(query_text, top_k=TOP_K)
+            for jid, bm25_score in bm25_results:
+                if jid in retrieved:
+                    retrieved[jid] += 0.3 * bm25_score
+                else:
+                    retrieved[jid] = 0.3 * bm25_score
+        else:
+            # B0: BM25-only full retrieval
+            bm25_results = bm25_retrieve(query_text, top_k=TOP_K)
+            for jid, bm25_score in bm25_results:
+                retrieved[jid] = bm25_score
+
+        # Rank retrieved jobs by score, assign relevance from labels
+        ranked_jobs = sorted(retrieved.items(), key=lambda x: (-x[1], x[0]))[:TOP_K]
+        for jid, score in ranked_jobs:
+            ranking_rows.append({
+                "query_id": query_id,
+                "job_id": jid,
+                "score": score,
+                "relevance": rel_map.get(jid, 0),
+            })
+
+        query_count += 1
+        if query_count % 500 == 0:
+            print(f"    Scored {query_count:,} queries...")
+
+    eval_time = time.time() - t0
+    print(f"  Retrieval done: {query_count:,} queries in {eval_time:.1f}s")
+
+    if not ranking_rows:
+        print("  ⚠ No ranking rows produced!")
+        return {"error": "no_rankings", "split": config.eval_split}
+
+    rankings_df = pd.DataFrame(ranking_rows)
+    metrics_summary, per_query_df = evaluate_rankings(rankings_df, k=10)
+
+    print(f"\n  ─── Metrics (k=10) ───")
+    for metric_name, value in sorted(metrics_summary.items()):
+        print(f"    {metric_name}: {value:.4f}")
+
+    # Also compute Hit@1
+    hit1_rows: list[float] = []
+    for _, group in rankings_df.groupby("query_id"):
+        ordered = group.sort_values("score", ascending=False)
+        rels = ordered["relevance"].astype(float).tolist()
+        hit1_rows.append(float(bool(rels) and rels[0] > 0))
+    metrics_summary["hit@1"] = sum(hit1_rows) / len(hit1_rows) if hit1_rows else 0.0
+    print(f"    hit@1: {metrics_summary['hit@1']:.4f}")
+
+    # Recall: how many of the user's positive jobs appear in our top-K?
+    recall_rows: list[float] = []
+    for qid, rel_map_q in relevance_lookup.items():
+        positives = {jid for jid, rel in rel_map_q.items() if rel > 0}
+        if not positives:
+            continue
+        retrieved_for_q = set(
+            r["job_id"] for r in ranking_rows if r["query_id"] == qid
+        )
+        recall_rows.append(len(positives & retrieved_for_q) / len(positives))
+    metrics_summary[f"recall@{TOP_K}"] = (
+        sum(recall_rows) / len(recall_rows) if recall_rows else 0.0
+    )
+    print(f"    recall@{TOP_K}: {metrics_summary[f'recall@{TOP_K}']:.4f}")
+
+    eval_report = {
+        "step": "step8_evaluation",
+        "run_id": config.run_id or "default",
+        "eval_mode": "full_retrieval",
+        "top_k": TOP_K,
+        "feature_flags": config.feature_flags_dict(),
+        "eval_config": {
+            "split": config.eval_split,
+            "limit": config.eval_limit,
+            "query_count": query_count,
+            "label_count": len(ranking_rows),
+        },
+        "metrics": metrics_summary,
+        "eval_time_seconds": round(eval_time, 1),
+        "per_query_summary": {
+            "total": len(per_query_df),
+            "with_hits": int(
+                (per_query_df.get("hit@10", pd.Series([0])) > 0).sum()
+            ) if not per_query_df.empty else 0,
+        },
+    }
+
+    return eval_report
+
+
+def main(argv: list[str] | None = None) -> None:
+    config = parse_step8_args(argv)
+
     print("=" * 60)
     print("Step 8 — Retrieval Smoke Test")
+    if config.run_eval:
+        print("         + Evaluation Harness (NDCG/MRR/Hit)")
     print("=" * 60)
+    print(f"  Feature flags: {config.feature_flags_dict()}")
+    if config.run_id:
+        print(f"  Run ID: {config.run_id}")
 
     index = GraphIndex()
     index.load()
@@ -557,15 +1160,11 @@ def main() -> None:
             print(f"      paths: {job['paths']}")
 
     # Export trace report
-    report = {
+    report: dict[str, Any] = {
         "step": "step8_retrieval_smoke",
         "schema_version": "v0.1",
-        "feature_flags": {
-            "use_graph": True,
-            "use_llm_extraction": False,
-            "use_llm_relations": False,
-            "use_adaptive_traversal": False,
-        },
+        "run_id": config.run_id or "smoke",
+        "feature_flags": config.feature_flags_dict(),
         "queries": [
             {
                 "query": r.query,
@@ -606,6 +1205,18 @@ def main() -> None:
     else:
         print("  ✓ All queries returned results")
     print(f"\n  Report: {report_path}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Evaluation harness (--eval mode)
+    # ─────────────────────────────────────────────────────────────────────────
+    if config.run_eval:
+        eval_report = run_evaluation(index, config)
+        eval_path = GRAPH_DIR / f"eval_report_{config.run_id or 'default'}.json"
+        eval_path.write_text(
+            json.dumps(eval_report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"\n  Eval report: {eval_path}")
+
     print("\n✓ Step 8 complete.")
 
 

@@ -259,6 +259,7 @@ tasks:
 feature_flags:
   use_llm_extraction: false          # Gate 1 未過門檻（見 blocking_issues），維持 false
   use_llm_canonical_verifier: false
+  use_llm_classification: false      # Phase 1 (A): step_a6 分類；B 用 --use-llm-classification 切換
   use_llm_relations: false
   use_embedding_candidates: false
 

@@ -616,17 +616,21 @@ def load_soft_skill_blacklist(
     return ids
 
 
-def main(extractions_path: str | None = None) -> None:
+def main(extractions_path: str | None = None, blacklist_path: str | None = None) -> None:
     print("=" * 60)
     print("Step 5 — Statistical Edges")
     print("=" * 60)
 
-    config = StatisticalConfig(soft_skill_blacklist=load_soft_skill_blacklist())
+    bl_path = Path(blacklist_path) if blacklist_path else None
+    blacklist = load_soft_skill_blacklist(bl_path)
+    config = StatisticalConfig(soft_skill_blacklist=blacklist)
     builder = StatisticalEdgeBuilder(config)
 
     ext_path = Path(extractions_path) if extractions_path else (GRAPH_DIR / "extractions.jsonl")
     print(f"\n  Config: {config.to_dict()}")
     print(f"  Extractions: {ext_path}")
+    if bl_path:
+        print(f"  Blacklist override: {bl_path}")
 
     print("\n  Loading mentions...")
     builder.load_mentions(ext_path)
@@ -645,6 +649,10 @@ def main(extractions_path: str | None = None) -> None:
 
 
 if __name__ == "__main__":
-    import sys
-    ext = sys.argv[1] if len(sys.argv) > 1 else None
-    main(ext)
+    import argparse as _argparse
+
+    _parser = _argparse.ArgumentParser(description="Step 5 — Statistical Edges")
+    _parser.add_argument("extractions", nargs="?", default=None, help="Path to extractions.jsonl")
+    _parser.add_argument("--blacklist", type=str, default=None, help="Path to soft_skill_blacklist CSV")
+    _args = _parser.parse_args()
+    main(_args.extractions, _args.blacklist)

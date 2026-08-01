@@ -18,14 +18,19 @@ Input:
 - graph/skill_dictionary.csv (Step 3)
 - graph/credential_dictionary.csv (Step 3)
 - graph/occupation_hierarchy.csv (Step 1)
+
+CLI:
+  python step6_graph_export.py [--use-llm-classification] [--blacklist PATH]
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import hashlib
 import json
 from collections import Counter
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -33,6 +38,55 @@ from typing import Any
 import duckdb
 
 GRAPH_DIR = Path(__file__).parent / "graph"
+
+
+@dataclass(frozen=True)
+class Step6Config:
+    """Feature flags and paths configurable via CLI."""
+
+    use_graph: bool = True
+    use_llm_extraction: bool = False
+    use_llm_classification: bool = False
+    use_llm_relations: bool = False
+    use_adaptive_traversal: bool = False
+    blacklist_path: Path | None = None
+
+    def feature_flags_dict(self) -> dict[str, bool]:
+        return {
+            "use_graph": self.use_graph,
+            "use_llm_extraction": self.use_llm_extraction,
+            "use_llm_classification": self.use_llm_classification,
+            "use_llm_relations": self.use_llm_relations,
+            "use_adaptive_traversal": self.use_adaptive_traversal,
+        }
+
+
+def parse_step6_args(argv: list[str] | None = None) -> Step6Config:
+    parser = argparse.ArgumentParser(description="Step 6 — Graph Assembly Export")
+    parser.add_argument(
+        "--use-llm-classification",
+        action="store_true",
+        default=False,
+        help="Enable LLM skill classification (uses skill_kind from dictionary + blacklist v0.3)",
+    )
+    parser.add_argument(
+        "--no-graph",
+        action="store_true",
+        default=False,
+        help="Disable graph (for B0 baseline comparison)",
+    )
+    parser.add_argument(
+        "--blacklist",
+        type=Path,
+        default=None,
+        help="Path to soft_skill_blacklist CSV (overrides auto-detection)",
+    )
+    args = parser.parse_args(argv)
+    return Step6Config(
+        use_graph=not args.no_graph,
+        use_llm_classification=args.use_llm_classification,
+        blacklist_path=args.blacklist,
+    )
 
 
 def _sha256_file(path: Path) -> str:
@@ -105,7 +159,7 @@ def build_nodes(graph_dir: Path) -> Path:
                 for row in reader:
                     key = row.get("registry_key", "")
                     node_id = f"skill:{key}"
-                    gf = freq.get(node_id, "")
+                    gf = freq.get(node_id, 0)  # 0 for blacklisted skills without frequency
                     writer.writerow({
                         "node_id": node_id,
                         "node_type": "Skill",
@@ -284,7 +338,7 @@ def merge_edges(graph_dir: Path) -> Path:
     return target
 
 
-def build_manifest(graph_dir: Path, node_counts: dict, edge_counts: dict) -> Path:
+def build_manifest(graph_dir: Path, node_counts: dict, edge_counts: dict, config: Step6Config) -> Path:
     """Build final graph_manifest.json."""
 
     # Load step manifests for provenance
@@ -318,12 +372,7 @@ def build_manifest(graph_dir: Path, node_counts: dict, edge_counts: dict) -> Pat
         "edge_counts": edge_counts,
         "total_nodes": sum(node_counts.values()),
         "total_edges": sum(edge_counts.values()),
-        "feature_flags": {
-            "use_graph": True,
-            "use_llm_extraction": False,
-            "use_llm_relations": False,
-            "use_adaptive_traversal": False,
-        },
+        "feature_flags": config.feature_flags_dict(),
         "dictionary_versions": {
             "skill": "v0.1",
             "credential": "v0.1",
@@ -348,10 +397,15 @@ def build_manifest(graph_dir: Path, node_counts: dict, edge_counts: dict) -> Pat
     return manifest_path
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    config = parse_step6_args(argv)
+
     print("=" * 60)
     print("Step 6 — Graph Assembly Export")
     print("=" * 60)
+    print(f"  Feature flags: {config.feature_flags_dict()}")
+    if config.blacklist_path:
+        print(f"  Blacklist override: {config.blacklist_path}")
 
     graph_dir = GRAPH_DIR
     graph_dir.mkdir(parents=True, exist_ok=True)
@@ -380,7 +434,7 @@ def main() -> None:
 
     # 3. Build manifest
     print("\n  [3/3] Building graph_manifest.json...")
-    manifest_path = build_manifest(graph_dir, dict(node_counts), dict(edge_counts))
+    manifest_path = build_manifest(graph_dir, dict(node_counts), dict(edge_counts), config)
     print(f"    Manifest: {manifest_path}")
 
     # Summary
