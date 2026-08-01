@@ -127,14 +127,13 @@ class GraphIndex:
                         self.occ_alias_ambiguous[key].append(canonical)
 
     def _load_job_titles(self) -> None:
-        """Load a sample of job titles for display (first 100K)."""
+        """Load all job titles for display."""
         import duckdb
         con = duckdb.connect(":memory:")
         try:
             rows = con.execute(f"""
                 SELECT job_id, title
                 FROM read_parquet('{(self.graph_dir / "train_jobs.parquet").resolve().as_posix()}')
-                LIMIT 200000
             """).fetchall()
             for job_id, title in rows:
                 self.job_titles[f"job:{job_id}"] = title or ""
@@ -315,6 +314,24 @@ class TraversalResult:
     latency_ms: float = 0.0
 
 
+def _get_descendants(occ_code: str, index: GraphIndex) -> list[str]:
+    """Get all descendant occupation codes via reverse parent lookup."""
+    # Build child → parent is already in index.occ_parent
+    # We need parent → children (reverse)
+    children_map: dict[str, list[str]] = defaultdict(list)
+    for child, parent in index.occ_parent.items():
+        children_map[parent].append(child)
+
+    descendants = []
+    stack = [occ_code]
+    while stack:
+        current = stack.pop()
+        for child in children_map.get(current, []):
+            descendants.append(child)
+            stack.append(child)
+    return descendants
+
+
 def traverse_and_rank(
     query: str,
     index: GraphIndex,
@@ -367,14 +384,31 @@ def traverse_and_rank(
                     job_scores[job_id] += 0.3 * npmi
                     job_paths[job_id].append(f"expand:{related_skill}(npmi={npmi:.2f})")
 
-    # Occupation path
+    # Occupation path (with hierarchy descendant expansion)
     for occ_id in resolution.resolved_occupations:
         occ_code = occ_id.replace("occ:", "")
-        jobs = index.occ_to_jobs.get(occ_code, [])
+
+        # Collect direct jobs + all descendant occupation jobs
+        all_occ_codes = [occ_code]
+        # Find descendants via occ_parent (reverse lookup)
+        descendants = _get_descendants(occ_code, index)
+        all_occ_codes.extend(descendants)
+
+        jobs = []
+        for code in all_occ_codes:
+            jobs.extend(index.occ_to_jobs.get(code, []))
+        # Deduplicate
+        jobs = list(set(jobs))
+
         result.occupation_hits += len(jobs)
-        result.trace_lines.append(
-            f"→ {occ_id} <-[IN_OCCUPATION]- {len(jobs):,} jobs"
-        )
+        if descendants:
+            result.trace_lines.append(
+                f"→ {occ_id} + {len(descendants)} descendants <-[IN_OCCUPATION]- {len(jobs):,} jobs"
+            )
+        else:
+            result.trace_lines.append(
+                f"→ {occ_id} <-[IN_OCCUPATION]- {len(jobs):,} jobs"
+            )
         for job_id in jobs:
             job_scores[job_id] += 0.5
             job_paths[job_id].append(f"occupation:{occ_id}")
