@@ -51,16 +51,81 @@ BATCH_SIZE = 10_000
 # 非結構化來源欄位（掃描用）
 SOURCE_FIELDS = ["職務名稱", "職務內容", "附加條件"]
 
+# 允許進入 lexicon 的極短 pattern（避免 C# / Go 被誤殺）
+SHORT_PATTERN_ALLOWLIST = frozenset({
+    "c", "c#", "c++", "r", "go", "r語", "ai", "ui", "ux", "qa", "it",
+    "pc", "os", "pr", "ae", "ps", "id", "xd", "bi", "ml", "dl", "vr", "ar",
+})
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Normalization
+# Normalization（含 original offset 對齊）
 # ─────────────────────────────────────────────────────────────────────────────
+
+def normalize_with_alignment(text: str) -> tuple[str, list[int]]:
+    """
+    NFKC + casefold + 空白壓縮，並回傳 norm→original index map。
+
+    index_map[i] = 產生 normalized[i] 的原始字元起點。
+    exclusive original end = index_map[norm_end - 1] + 1
+
+    不可再用「len(norm)==len(raw) 就直接切片」：空白壓縮 / NFKC 長度變化
+    可能讓總長巧合相等但對齊已錯，進而產出 avaScript、 / #) 這類壞 evidence。
+    """
+    tmp_chars: list[str] = []
+    tmp_map: list[int] = []
+    for i, ch in enumerate(text):
+        for fc in unicodedata.normalize("NFKC", ch).casefold():
+            tmp_chars.append(fc)
+            tmp_map.append(i)
+
+    out_chars: list[str] = []
+    out_map: list[int] = []
+    prev_space = False
+    for ch, oi in zip(tmp_chars, tmp_map):
+        if ch.isspace():
+            if out_chars and not prev_space:
+                out_chars.append(" ")
+                out_map.append(oi)
+            prev_space = True
+            continue
+        out_chars.append(ch)
+        out_map.append(oi)
+        prev_space = False
+
+    start = 0
+    end = len(out_chars)
+    while start < end and out_chars[start] == " ":
+        start += 1
+    while end > start and out_chars[end - 1] == " ":
+        end -= 1
+    return "".join(out_chars[start:end]), out_map[start:end]
+
 
 def _normalize(text: str) -> str:
-    """NFKC + casefold + 空白壓縮，保留語意標點"""
-    value = unicodedata.normalize("NFKC", text)
-    value = re.sub(r"\s+", " ", value.strip())
-    return value.casefold()
+    """NFKC + casefold + 空白壓縮（與 normalize_with_alignment 字串結果一致）"""
+    return normalize_with_alignment(text)[0]
+
+
+def _norm_span_to_original(
+    index_map: list[int], norm_start: int, norm_end: int
+) -> tuple[int, int]:
+    if norm_start < 0 or norm_end <= norm_start or norm_end > len(index_map):
+        return -1, -1
+    return index_map[norm_start], index_map[norm_end - 1] + 1
+
+
+def _is_usable_pattern(normalized: str) -> bool:
+    """Filter lexicon junk that would create false / truncated matches."""
+    if not normalized:
+        return False
+    if len(normalized) <= 2 and normalized not in SHORT_PATTERN_ALLOWLIST:
+        return False
+    if normalized[0] in ",#/:;.|\"'`、•-_+=":
+        return False
+    if normalized[-1] in ",、;:|\"'`":
+        return False
+    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -144,29 +209,30 @@ class AhoCorasick:
 # Lexicon loading
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_lexicon(lexicon_path: Path) -> dict[str, dict[str, Any]]:
+def load_lexicon(lexicon_path: Path) -> tuple[dict[str, dict[str, Any]], int]:
     """
     Load phrase_lexicon CSV into {normalized_pattern: metadata} dict.
-    The normalized_pattern is used for matching; metadata has display_name + canonical.
+    Returns (lexicon, skipped_count).
     """
     lexicon: dict[str, dict[str, Any]] = {}
+    skipped = 0
     with lexicon_path.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             canonical = row["canonical_candidate"]
             display = row["display_name"]
-            # Build normalized search key from display_name
             normalized = _normalize(display)
-            if len(normalized) < 2:
+            if not _is_usable_pattern(normalized):
+                skipped += 1
                 continue
-            # Skip if already have a longer or higher-freq entry for same normalized form
+            # Prefer first (higher job_frequency) entry for same normalized form
             if normalized not in lexicon:
                 lexicon[normalized] = {
                     "canonical_candidate": canonical,
                     "display_name": display,
                     "source_fields": row.get("source_fields", ""),
                 }
-    return lexicon
+    return lexicon, skipped
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,6 +257,8 @@ def extract_phrase_for_job(
     """
     Scan non-structured fields for phrase matches. Produce §3.4 contract record.
     Credentials in phrase_lexicon (source_field=專業證照) go to credentials[].
+
+    offsets / evidence 一律落在 original source_field 文字上（非 normalized）。
     """
     skills: list[dict[str, Any]] = []
     credentials: list[dict[str, Any]] = []
@@ -199,34 +267,38 @@ def extract_phrase_for_job(
         raw_text = fields.get(source_field_name, "")
         if not raw_text:
             continue
-        normalized_text = _normalize(raw_text)
+
+        normalized_text, index_map = normalize_with_alignment(raw_text)
+        if not normalized_text:
+            continue
         matches = automaton.search(normalized_text)
 
-        for start, end, pattern in matches:
+        for norm_start, norm_end, pattern in matches:
             meta = lexicon.get(pattern)
             if meta is None:
                 continue
 
-            # Extract evidence from original text
-            # _normalize does NFKC + casefold + whitespace collapse
-            # For evidence we need verbatim from raw_text at approximately same position
-            # Since casefold doesn't change length for most chars, try direct slice first
-            if len(normalized_text) == len(raw_text):
-                evidence = raw_text[start:end]
-            else:
-                # Length mismatch: use display_name as safe fallback
-                evidence = meta["display_name"]
+            orig_start, orig_end = _norm_span_to_original(index_map, norm_start, norm_end)
+            if orig_start < 0 or orig_end <= orig_start or orig_end > len(raw_text):
+                continue
+
+            evidence = raw_text[orig_start:orig_end]
+            # 對齊健全性：映射後的 evidence 正規化必須等於命中 pattern
+            if _normalize(evidence) != pattern:
+                continue
 
             canonical = meta["canonical_candidate"]
             is_credential = "專業證照" in meta.get("source_fields", "")
 
             mention = {
-                "mention_id": _mention_id(job_id, source_field_name, start, end, EXTRACTOR_VERSION),
+                "mention_id": _mention_id(
+                    job_id, source_field_name, orig_start, orig_end, EXTRACTOR_VERSION
+                ),
                 "raw_mention": evidence,
                 "canonical_candidate": canonical,
                 "source_field": source_field_name,
-                "start_offset": start,
-                "end_offset": end,
+                "start_offset": orig_start,
+                "end_offset": orig_end,
                 "requirement_level": "unspecified",
                 "assertion_status": "affirmed",
                 "confidence": PHRASE_CONFIDENCE,
@@ -268,8 +340,8 @@ def run_phrase_extraction(
 
     # 1. Load lexicon and build automaton
     print("  Loading phrase lexicon...")
-    lexicon = load_lexicon(lexicon_path)
-    print(f"  Loaded {len(lexicon):,} patterns")
+    lexicon, skipped_patterns = load_lexicon(lexicon_path)
+    print(f"  Loaded {len(lexicon):,} patterns (skipped junk/short: {skipped_patterns:,})")
 
     print("  Building Aho-Corasick automaton...")
     ac = AhoCorasick()
@@ -357,6 +429,7 @@ def run_phrase_extraction(
         "source_fields_scanned": SOURCE_FIELDS,
         "confidence": PHRASE_CONFIDENCE,
         "lexicon_size": len(lexicon),
+        "lexicon_skipped_patterns": skipped_patterns,
         "statistics": {
             "total_jobs_scanned": total_jobs,
             "jobs_with_phrase_matches": jobs_with_matches,
@@ -369,15 +442,16 @@ def run_phrase_extraction(
         "contract_compliance": {
             "mention_id_deterministic": True,
             "evidence_is_verbatim_substring": True,
-            "start_end_offset_provided": True,
+            "start_end_offset_on_original_text": True,
             "credentials_separated_from_skills": True,
             "latin_word_boundary_enforced": True,
+            "normalize_alignment_map": True,
         },
         "known_limitations": [
             "assertion_status 全部預設 affirmed（否定偵測留待後處理或 LLM）",
             "requirement_level 預設 unspecified（preferred/required 判定留待後處理）",
-            "casefold 可能導致少數 CJK 字元的 offset 微偏（極少見）",
             "lexicon 來自結構化欄位統計，非結構化文字中的 OOV 技能不在涵蓋範圍",
+            "offsets 經 NFKC/casefold/空白壓縮對齊映射；對齊失敗的命中會丟棄而非輸出壞 evidence",
         ],
     }
     OUTPUT_MANIFEST.write_text(
