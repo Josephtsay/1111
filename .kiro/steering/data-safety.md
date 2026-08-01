@@ -2,17 +2,31 @@
 inclusion: auto
 ---
 
-# 資料安全規則
+# 資料安全與 Git 規範
 
-## 禁止事項
+## 資料安全
 
-- 不得把 `graph/`、`*.parquet`、大型 CSV 加入 git（已在 .gitignore）
-- 不得把 `data/raw/` 的原始資料 echo 到 chat 超過 5 行 sample
-- 不得捏造資料或統計數字；若不確定，停下來詢問
-- 不得擅自決定 cutoff、模型選擇、品質門檻等需要雙人同意的事項
+- 不得把 `graph/`、`*.parquet`、大型 CSV、`data/raw/` 加入 git（已在 .gitignore）
+- 不得在 chat 中 echo `data/raw/` 原始資料超過 5 行 sample
+- 不得捏造資料、統計數字或假設未取得的資訊；若不確定，停下來詢問
+- 不得擅自決定需要雙人同意的事項（cutoff、模型選擇、品質門檻、Schema 變更）
+- 不得在非結構化 mention 全部預設 `affirmed`——assertion gate 必須如實運作
 
 ## Git 規範
 
-- 分支：`feat/skill-graph`
-- Commit 前確認沒有 stage 到大檔或 .gitignore 內的檔案
-- 只 commit 腳本、config、小型 metadata（< 100KB）
+- 工作分支：`feat/skill-graph`
+- Commit 前確認沒有 stage 到 .gitignore 內的檔案或超過 100KB 的檔案
+- 只 commit：腳本 (*.py)、config (*.yaml, *.json < 100KB)、文件 (*.md)
+- Commit message 格式：`<type>(<scope>): <description>`
+  - type: feat / fix / chore / docs
+  - scope: step1 / step2 / step3 / step4 / step5 / step6 / step7 / schema / infra
+
+## 路徑慣例
+
+| 用途 | 路徑 |
+|------|------|
+| 原始資料 | `data/raw/` |
+| Graph 產出（不進 git） | `graph/` |
+| Pipeline 腳本 | 根目錄 `step*.py` |
+| 團隊文件 | `docs/` |
+| Kiro config | `.kiro/` |

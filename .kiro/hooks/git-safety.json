@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Prevent staging ignored/large files",
+      "trigger": "PreToolUse",
+      "description": "Prevents accidentally committing large artifacts or gitignored files. Applies to all team members.",
+      "matcher": "execute_bash",
+      "action": {
+        "type": "agent",
+        "prompt": "If this command involves `git add` or `git commit`, verify BEFORE executing:\n1. No files matching graph/, *.parquet, data/raw/, *.pdf, outputs/, *.pkl are staged\n2. No individual file exceeds 100KB\n3. The command does not use `git add .` or `git add -A` (prefer explicit file names)\nIf violated, refuse and explain. Otherwise proceed normally."
+      }
+    }
+  ]
+}

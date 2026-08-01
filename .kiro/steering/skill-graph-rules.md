@@ -2,46 +2,73 @@
 inclusion: auto
 ---
 
-# Skill Graph — Role B 工作規則
+# Skill Graph 團隊工作規則
 
-本專案正在建構 Skill Graph（技能圖譜），以下規則在所有互動中自動生效。
+本專案正在建構 Skill Graph（技能圖譜），以下規則適用於所有成員，在每次 Kiro 互動中自動生效。
 
-## 角色
+## Schema v0.1（已凍結 2026-08-01）
 
-我是 **Role B（Structure Graph）**，負責：
-- Step 1: 資料準備（已完成）
-- Step 4: Edge assembly（HAS_SKILL, IN_OCCUPATION, SUBCATEGORY_OF, REQUIRES_CREDENTIAL）
-- Step 5: 統計邊（CO_OCCURS_WITH, CORE_SKILL）
-- Step 6: Graph 組裝匯出
-- Step 7: 品質檢查
-- Step 8: Retrieval smoke test（與 A 共同）
-
-## Schema v0.1（已凍結）
-
-- **Node types:** Job, Skill, Occupation, Credential（Alias 用圖外字典）
+- **Node types:** Job, Skill, Occupation, Credential（Alias 用圖外版本化字典）
 - **Core edges:** HAS_SKILL, IN_OCCUPATION, SUBCATEGORY_OF, REQUIRES_CREDENTIAL
-- **Second phase:** CO_OCCURS_WITH, CORE_SKILL; SEMANTICALLY_RELATED 預設 off
-- **Schema 變更需雙人同意並升版**
+- **Second phase:** CO_OCCURS_WITH, CORE_SKILL
+- **創意實驗:** SEMANTICALLY_RELATED — 預設 `use_llm_relations=false`，需 dual-signal verified
+- **Schema 變更需雙人同意並升版，任一方不得私下新增 edge type 或改 ID 規則**
+
+## 分工
+
+| 角色 | 核心職責 |
+|------|----------|
+| **A — Content Graph** | Step 2 抽取、Step 3 正規化、alias/registry 內容、assertion challenge set、LLM prompt/verifier、model bake-off |
+| **B — Structure Graph** | Step 1 資料準備、Step 4 edge assembly、Step 5 統計邊、Step 6 匯出、Step 7 品質檢查 |
+| **共同** | Step 0 Schema、Step 8 retrieval smoke、Step 9 文件/ablation、Gate sign-off |
 
 ## 硬性約束
 
-1. 所有職缺皆為 train（不需 time-based cutoff）
-2. 不得使用 test 期間 JD 建圖
-3. ID 必須 deterministic：`job:<職缺編號>`, `skill:<registry_key>`, `occ:<CodeNo>`, `credential:<registry_key>`
-4. 不得擅自新增 edge type 或改 ID 規則
-5. `HAS_SKILL` 只能物化 `assertion_status=affirmed` 且 `canonicalization_status=accepted` 的 mentions
-6. Confidence 只用於 accept/quarantine，不直接進 ranking
-7. 合併策略：precision-first（寧可漏併不要誤併）
-8. test query / OOV 不回寫 graph / alias / registry
+1. **Train policy:** 所有職缺皆為 train（不需 time-based cutoff for jobs）；行為表以 6/1–6/4 切分
+2. 不得使用 test 期間 JD 建圖（違者整項可能不計分）
+3. ID 必須 deterministic：
+   - `job:<職缺編號>` → `job:1370179`
+   - `skill:<registry_key>` → `skill:python`
+   - `occ:<CodeNo>` → `occ:140200`
+   - `credential:<registry_key>` → `credential:高考護理師執照`
+4. `HAS_SKILL` 只能物化 `assertion_status=affirmed` 且 `canonicalization_status=accepted` 的 mentions
+5. Confidence 只用於 extraction accept/quarantine（threshold by method），不直接進 ranking
+6. 合併策略：**precision-first**（寧可漏併，不要誤併）
+7. test query / OOV 不回寫 graph / alias / registry / 統計量
+8. LLM 必須在建圖中有必要角色（非展示），並保留 ablation
+9. 不得捏造資料或統計數字；若不確定，停下來詢問使用者
 
 ## 介面契約
 
-- A 交付：`extractions.jsonl`（§3.4 格式）+ skill/credential/alias dictionaries
-- B 交付：`graph/nodes.csv` + `edges.csv` + manifest + audit + quality report
-- Golden slice：500 固定 Job IDs（`graph/golden_slice_ids.json`）
+```
+A 輸出 → extractions.jsonl（§3.4 格式）+ extraction_config.yaml
+         + skill_dictionary.csv + credential_dictionary.csv + alias_dictionary.csv
+B 輸出 → graph/nodes.csv + edges.csv + graph_manifest.json
+         + occupation_mapping_audit.csv + canonicalization_audit.csv + quality_report.json
+共同   → golden_slice contract test + traversal trace + ablation matrix
+```
 
-## 路徑慣例
+交接時必附 `schema_version`、輸入 artifact hash、row count、quarantine count。
 
-- 原始資料：`data/raw/`
-- Graph 產出：`graph/`（在 .gitignore 中，不進 git）
-- 腳本：專案根目錄 `step*.py`
+## 關鍵文件參照
+
+- Playbook: #[[file:docs/SKILL_GRAPH_PLAYBOOK.md]]
+- Golden slice IDs: `graph/golden_slice_ids.json`（500 筆固定 Job IDs，seed=2026）
+- Step 1 manifest: `graph/step1_manifest.json`
+
+## Innovation Contract
+
+- **H1:** LLM 抽取/正規化改善 alias、縮寫與 OOV query 的 recall
+- **H2:** query-adaptive traversal 比固定 1-hop 有更好的 NDCG@10
+- **Feature flags:** `use_graph`, `use_llm_extraction`, `use_llm_relations`, `use_adaptive_traversal`
+- 每個 flag 都有可重現 ablation；實驗功能退步就關閉
+
+## Gate 流程
+
+| Gate | 條件 |
+|------|------|
+| Gate 0 | Schema + JSON + cutoff + Innovation Contract 已鎖定 ✓ |
+| Gate 1 | Golden slice 500 jobs Step 1–4 跑通；A 的 JSONL 可被 B 原樣讀入 |
+| Gate 2 | 10k extraction + dictionary frozen；model chosen |
+| Gate 3 | Step 5–7 smoke 無 fail；DF/supernode 合理 |
+| Gate 4 | train-only + trace + ablation 可重現 |
