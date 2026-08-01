@@ -24,6 +24,18 @@ Skill Graph 是本命題的核心資產：把職缺文字中的技能抽成結�
 - **不得**使用 test 期間 JD 建圖（違者相關指標可能不計分）
 - 提案須包含 **graph schema** 與至少一個 **遍歷 / 聚合 trace** 範例
 - 最終需能做「有圖譜 vs 無圖譜」的 ablation
+- LLM 必須實際參與技能抽取、正規化、分類或關係判斷，並揭露失敗模式與防護；不能只是附加展示
+
+### 1.1 權威資料來源與衝突處理
+
+| 優先用途 | 來源 | 本文件採用方式 |
+|----------|------|----------------|
+| 比賽約束與交付物 | `1111 人力銀行 命題文件 - 2026 雲湧智生：臺灣生成式 AI 應用黑客松競賽.pdf` | 視為 graph train-only、LLM 核心角色、schema/trace、ablation 等約束的權威來源 |
+| 實際資料欄位、API、評估口徑 | `1111 人力銀行 -黑客松企業數據工作坊簡報.pdf` | 使用工作坊公布的實際欄位與 `query/location_code/duty_code` API contract |
+| 實作可用欄位與值域 | `dataset/*.csv`、`dataset/README.md` | 以實際 CSV header、資料型態與值域為準，不假設文件提到但未提供的欄位 |
+| 現場補充 | 8/1 主辦單位正式說明 | 可補充實作細節，但不得自行推定會覆蓋命題文件的交付規格 |
+
+已知文件差異：命題文件預告 JD 含「上架時間戳」，但實際 `職缺.csv` 與工作坊簡報僅提供 `職缺最後修改時間`；工作坊簡報也未列出明確 train/test cutoff。故本文件不得虛構 `posted_at` 或自行指定 cutoff，需在 manifest 中記錄依據與限制。
 
 ---
 
@@ -54,7 +66,7 @@ Schema 是兩人共用的合約。若未先對齊就分頭實作，常見後果�
 |--------|------|
 | Schema v0.1 | Node / Edge / 屬性 / ID 規則 |
 | 抽取 JSON 契約 | A 交給 B 的唯一格式 |
-| train cutoff | 時間切分規則（與比賽公告對齊） |
+| train cutoff | 時間切分規則、時區、邊界與依據（與主辦正式切分對齊） |
 | 品質政策 | fail / quarantine / warn |
 | 分工表 | 誰負責什麼、誰有權改 schema |
 
@@ -62,47 +74,68 @@ Schema 是兩人共用的合約。若未先對齊就分頭實作，常見後果�
 
 ---
 
-## 3. Schema v0.1（建議起點）
+## 3. Schema v0.1（建議鎖定版）
 
-以下為建議的 MVP。兩人可增減，但必須寫進共同文件並版本化。
+以下為建議的 MVP。Schema 描述圖中的**語意事實**；`.72`、`.45` 等排序係數不屬於 schema，應放在可調整、可做 ablation 的 ranking config。兩人可增減，但必須寫進共同文件並版本化。
 
 ### 3.1 節點（Nodes）
 
 | 類型 | 範例 | 必要屬性 | MVP |
 |------|------|----------|-----|
-| `Job` | `job:1370179` | `job_id`, `title`, `posted_at` / `last_modified_at` | 必做 |
-| `Skill` | `skill:python` | `canonical_name`, `skill_type`（可選） | 必做 |
-| `Occupation` | `occ:140200` | `occupation_code`, `name`（大/中/小類） | 必做 |
-| `SkillAlias` | `alias:reactjs` | `normalized_alias` | 可選（MVP 可用字典代替） |
+| `Job` | `job:1370179` | `job_id`, `title`, `last_modified_at`, `source_snapshot_id`, `content_hash`, `train_eligible` | 必做 |
+| `Skill` | `skill:python` | `skill_id`, `canonical_name`, `skill_kind`, `dictionary_version`, `global_job_frequency` | 必做 |
+| `Occupation` | `occ:140200` | `occupation_code`, `name`, `level`（`major` / `middle` / `minor`）, `parent_code` | 必做 |
+| `Credential` | `credential:高考護理師執照` | `credential_id`, `canonical_name`, `credential_type` | 必做 |
+| `SkillAlias` | `alias:reactjs` | `normalized_alias` | 可選；MVP 預設使用版本化字典，不建節點 |
 | `SkillCategory` | `cat:programming_language` | `name` | 後期 |
+
+資料只有 `職缺最後修改時間`，沒有刊登時間；因此 `posted_at` 不得列為必要欄位。若時程極緊，`Credential` 可暫以 `Skill.skill_kind=credential` 實作，但不可把證照與一般技能無標記混在一起。
 
 ### 3.2 邊（Edges）
 
-| 關係 | 方向 | 意義 | 建議權重來源 | MVP |
-|------|------|------|--------------|-----|
-| `REQUIRES` | Job → Skill | 必備技能 | 抽取判定；預設 weight `1.0` | 必做 |
-| `PREFERS` | Job → Skill | 加分技能 | 預設 `0.72` | 必做 |
-| `MENTIONS` | Job → Skill | 僅提及 | 預設 `0.45` | 必做 |
-| `INSTANCE_OF` | Job → Occupation | 職缺所屬職類 | 職缺分類欄位；`1.0` | 必做 |
-| `ALIAS_OF` | Alias → Skill 或字典映射 | 同義寫法 | 規則字典 | 必做（字典即可） |
-| `CO_OCCURS_WITH` | Skill ↔ Skill | 共現關聯 | NPMI / P(B\|A) | 第二階段 |
-| `CORE_SKILL` | Skill → Occupation | 職類核心技能 | 職類內出現率 | 第二階段 |
-| `IS_A` | Skill → Category | 技能分類 | 字典 | 後期 |
+| 關係 | 方向 | 意義 | 必要屬性 | MVP |
+|------|------|------|----------|-----|
+| `HAS_SKILL` | Job → Skill | 職缺與技能關係 | `requirement_level`, `confidence`, `source_fields`, `evidence_refs`, `evidence_count`, `extractor_version` | 必做 |
+| `IN_OCCUPATION` | Job → Occupation | 職缺所屬最細可解析職類 | `mapping_status` | 必做 |
+| `SUBCATEGORY_OF` | Occupation → Occupation | 小類 → 中類 → 大類 | 無 | 必做 |
+| `REQUIRES_CREDENTIAL` | Job → Credential | 職缺所列專業證照或資格 | `requirement_level`, `evidence_refs` | 必做 |
+| `CO_OCCURS_WITH` | Skill ↔ Skill | train Job 中的技能共現 | `count`, `support`, `npmi`, `p_b_given_a`, `p_a_given_b`, `train_window` | 第二階段 |
+| `CORE_SKILL` | Occupation → Skill | 職類核心技能 | `occupation_level`, `aggregation_scope`, `job_count`, `skill_job_count`, `rate`, `required_rate`, `train_window` | 第二階段 |
+| `IS_A` | Skill → SkillCategory | 技能分類 | `dictionary_version` | 後期 |
+
+`HAS_SKILL.requirement_level` 僅允許 `required` / `preferred` / `unspecified`。若排序組需要舊式 `REQUIRES` / `PREFERS` / `MENTIONS` edge type，可由 `HAS_SKILL` 產生相容 view；不要在來源資料層維護兩套互相重複的邊。
+
+Alias 預設是 query normalization 資產，不是圖內關係。若比賽明確要求 alias 出現在 graph schema，則必須同時把 `SkillAlias` 與 `ALIAS_OF` 升為 MVP，不可只在 trace 中畫出不存在的節點或邊。
 
 ### 3.3 ID 規則（必須 deterministic）
 
 ```text
 job:<職缺編號>                 → job:1370179
-skill:<normalized_canonical>   → skill:python
-occ:<職務代碼或正規化職類名>    → occ:140200
-alias:<normalized_alias>       → alias:reactjs   （若採用節點）
+skill:<registry_key>           → skill:python
+occ:<職務代碼>                 → occ:140200
+credential:<registry_key>      → credential:高考護理師執照
+alias:<normalized_alias>       → alias:reactjs   （僅在採用 Alias 節點時）
 ```
 
 要求：
 
 - 同一輸入重跑，ID 必須相同
-- 正規化字串規則兩人共用（建議 NFKC + casefold + 空白壓縮）
+- `Occupation` 一律使用 `職務對照表.CodeNo`，禁止用顯示名稱產生 ID
+- Skill / Credential ID 由版本化 registry 產生；顯示名稱可以改，ID 不跟著改
+- 正規化規則兩人共用（建議 NFKC + casefold + 空白壓縮），但不得移除具有語意的標點，例如 `C++`、`C#`、`.NET`、`Node.js`
+- 必須定義 normalized key collision 的 fail / quarantine 規則
 - 禁止用「執行當下流水號」當 ID
+
+Edge deterministic key：
+
+```text
+Job–Skill              → (job_id, skill_id)
+Job–Occupation         → (job_id, occupation_code)
+Occupation hierarchy   → (child_occ_code, parent_occ_code)
+Job–Credential         → (job_id, credential_id)
+Skill co-occurrence     → (min(skill_a, skill_b), max(skill_a, skill_b))
+Occupation core skill  → (occupation_code, skill_id, aggregation_scope)
+```
 
 ### 3.4 抽取結果契約（A → B 唯一介面）
 
@@ -110,15 +143,37 @@ alias:<normalized_alias>       → alias:reactjs   （若採用節點）
 
 ```json
 {
-  "job_id": "1370179",
+  "job_id": "3945298",
   "skills": [
     {
-      "raw_mention": "ReactJS",
-      "canonical_candidate": "React",
-      "requirement": "required",
+      "mention_id": "mention:3945298:職務內容:15:17:v0.1",
+      "raw_mention": "護理",
+      "canonical_candidate": "skill:nursing_care",
+      "source_field": "職務內容",
+      "start_offset": 15,
+      "end_offset": 17,
+      "requirement_level": "unspecified",
+      "assertion_status": "affirmed",
       "confidence": 0.9,
-      "evidence": "熟悉 ReactJS 開發",
-      "method": "structured"
+      "evidence": "護理人員工作",
+      "method": "phrase",
+      "extractor_version": "v0.1"
+    }
+  ],
+  "credentials": [
+    {
+      "mention_id": "mention:3945298:專業證照:1:v0.1",
+      "raw_mention": "高考護理師執照",
+      "canonical_candidate": "credential:高考護理師執照",
+      "source_field": "專業證照",
+      "start_offset": null,
+      "end_offset": null,
+      "requirement_level": "unspecified",
+      "assertion_status": "affirmed",
+      "confidence": 1.0,
+      "evidence": "高考護理師執照",
+      "method": "structured",
+      "extractor_version": "v0.1"
     }
   ],
   "extraction_version": "v0.1"
@@ -129,10 +184,50 @@ alias:<normalized_alias>       → alias:reactjs   （若採用節點）
 
 | 欄位 | 說明 |
 |------|------|
-| `requirement` | 僅允許 `required` / `preferred` / `mentioned` |
-| `evidence` | **必填**；必須能在原 JD 找到對應片段 |
+| `mention_id` | deterministic；建議由 `job_id + source_field + offsets + extractor_version` 產生 |
+| `source_field` | 原始來源欄位，例如 `電腦技能資料`、`工作技能`、`專業證照`、`職務內容`、`附加條件` |
+| `start_offset` / `end_offset` | 非結構化文字建議必填；結構化欄位可為 `null` |
+| `requirement_level` | 僅允許 `required` / `preferred` / `unspecified` |
+| `assertion_status` | 僅允許 `affirmed` / `negated` / `uncertain`；MVP 至少支援 `affirmed` |
+| `confidence` | `[0, 1]`；代表抽取可信度，不代表職缺相關性；不得直接作 ranking weight |
+| `evidence` | **必填**；必須能在 `source_field` 對應原文找到片段 |
 | `method` | `structured` / `phrase` / `llm` |
-| `canonical_candidate` | 抽取端初步建議；最終 canonical 以正規化流水線為準 |
+| `extractor_version` | 規則、phrase matcher 或模型版本；用於比較不同方法的 confidence |
+| `canonical_candidate` | 抽取端初步建議；最終 canonical 以版本化 registry 為準 |
+
+同一 `(job, skill)` 或 `(job, credential)` 的多筆 mention **不可在抽取階段刪除**。B 在組邊時才物化一條 `HAS_SKILL` / `REQUIRES_CREDENTIAL`，並保留全部 `evidence_refs`、來源欄位與 evidence count。
+
+#### Confidence policy（Day 0 建議預設）
+
+1. `confidence` 只表示 extraction reliability，用於 accept / quarantine；**不直接進 ranking score**。
+2. 門檻依 `method` 分開定義於版本化 `extraction_config.yaml`，禁止用單一全域門檻比較 `structured`、`phrase`、`llm`。
+3. `structured` 只有在 source-specific parser 精確命中且通過 registry 驗證時可給 `1.0`。
+4. `phrase` / `llm` confidence 由規則驗證、詞表匹配、evidence grounding 等外部訊號產生；不得直接採用 LLM 自評分數。
+5. 低於該 method 門檻的 mention 進 quarantine，不得物化為 graph edge。
+6. 同一 edge 有多筆 accepted mentions 時，`HAS_SKILL.confidence = max(mention.confidence)`；支持強度另以 `evidence_count` 表達，不使用假設 mentions 相互獨立的機率公式。
+7. ranking 若要使用 extraction confidence，必須另做校準與 ablation，並在 `ranking_config.yaml` 明示；v0.1 預設不使用。
+
+### 3.5 Alias 字典契約
+
+MVP 的 Skill / Occupation alias 採圖外版本化 `alias_dictionary.csv`，共用以下 schema：
+
+| 欄位 | 說明 |
+|------|------|
+| `alias_key` | 正規化後 alias；NFKC + casefold + 空白壓縮，但保留語意標點 |
+| `raw_alias` | 原始 alias，供 audit 與展示 |
+| `entity_type` | `skill` / `occupation` |
+| `canonical_id` | `skill:<registry_key>` 或 `occ:<CodeNo>` |
+| `source` | `manual` / `CodeAlike` / `CodeName` / `CodeNameEN` / `extracted` |
+| `language` | `zh` / `en` / `mixed` / `unknown` |
+| `ambiguity_status` | `unique` / `ambiguous` / `quarantined` |
+| `dictionary_version` | alias dictionary 版本 |
+
+`CodeAlike` ingestion 規則：
+
+1. 將 `<br>`、`<br/>`、`<br />` 與換行視為 alias delimiter；不得無條件以 `/`、`／` 切分。
+2. `CodeAlike`、`CodeNameA`、`CodeNameEN` 對到該列 `CodeNo`；`CodeNameB/C` 必須對到解析後的中類 / 大類 parent CodeNo，**不可**把父層名稱映射到每個 descendant leaf。所有項目都保留原始 `source`。
+3. 同一 `alias_key` 對到多個 `canonical_id` 時保留多筆候選並標記 `ambiguous`；query resolver 可利用 `duty_code`、其他 query token 或層級做 disambiguation，不得靜默任選或合併 Occupation。
+4. Alias dictionary 的輸入 hash、版本與 ambiguity 計數寫入 manifest。
 
 ---
 
@@ -144,6 +239,8 @@ alias:<normalized_alias>       → alias:reactjs   （若採用節點）
 |------|------|
 | `職缺.csv`（**train 期**） | 建圖主來源：標題、內容、技能欄位、職務分類、時間戳 |
 | `職務對照表.csv` | Occupation 代碼 / 名稱 / `CodeAlike`（相似職稱） |
+
+`職缺.csv` 是 2026-06-01～06-07 資料包中的主檔，但其 `職缺最後修改時間` 範圍超過該週；**資料包期間不等於 train window**。在主辦正式 cutoff 未確認前，只可做資料剖析與 smoke，不可宣稱已完成 train-only 全量建圖。
 
 ### 4.2 建圖輔助（非圖結構本體）
 
@@ -159,6 +256,23 @@ alias:<normalized_alias>       → alias:reactjs   （若採用節點）
 2. **高覆蓋**：`職務名稱`、`職務內容`、`附加條件`
 3. **結構邊**：`職務大類` / `中類` / `小類`、`職缺編號`、`職缺最後修改時間`
 
+### 4.4 實際資料盤點（Step 0 基線）
+
+以下數字來自對 `dataset/` 內 CSV 的逐列掃描，供 schema 與品質門檻設計；若資料檔更新，必須重跑並更新本節或另存 audit report。
+
+| 項目 | 觀察值 | Schema / 流程影響 |
+|------|--------|-------------------|
+| 職缺數 | 1,218,635；`職缺編號` 全部唯一 | `job:<職缺編號>` 可直接作 deterministic ID |
+| 最後修改時間 | 2024-01-01 00:12:09.827 ～ 2026-06-24 14:59:55.470 | 必須記錄 cutoff、時區、snapshot；不可把資料包週期當 cutoff |
+| 2026-06-07 後修改 | 249,894 筆 | 未確認 train policy 前不得納入 train graph |
+| 任一結構化能力欄非空 | 382,758 筆（31.41%） | 結構化抽取適合先做，但無法單獨提供足夠 recall |
+| `電腦技能資料` | 257,193 筆（21.11%）；約 405 個逗號切分值 | 適合建立高 precision seed dictionary；需控制 Office 類 supernode |
+| `專業證照` | 111,907 筆（9.18%）；約 1,637 個逗號切分值 | 應建 `Credential` 或至少用 `skill_kind=credential` 隔離 |
+| `工作技能` | 151,263 筆（12.41%）；約 1,032 個逗號切分值 | 需 source-specific parser；不可把所有中文標點一律切開 |
+| Occupation | 1,217,912 筆可由大/中/小類唯一映射 CodeNo；10 筆雙重匹配；713 筆全空 | 以完整三級 tuple 映射；定義 ambiguity 與缺值政策 |
+| Occupation 層級 | 1,217,452 筆映射小類；460 筆只映射中類 | `IN_OCCUPATION` 必須指向「最細可解析層級」，不可假設全是 leaf |
+| 高頻泛用技能 | Excel 208,508、Word 202,720、PowerPoint 124,779 | 保留供 query 使用，但以 DF/IDF、top-N 與職類內 salience 控制權重 |
+
 ---
 
 ## 5. 完整建圖步驟
@@ -168,7 +282,7 @@ alias:<normalized_alias>       → alias:reactjs   （若採用節點）
 1. 資料準備（train JD only）
 2. 技能抽取
 3. 技能正規化（canonicalization）
-4. Job–Skill / Job–Occupation 邊組裝
+4. HAS_SKILL / IN_OCCUPATION / hierarchy 邊組裝
 5. Skill–Skill 共現與 Occupation 核心技能
 6. Graph 組裝匯出
 7. 品質檢查
@@ -181,15 +295,19 @@ alias:<normalized_alias>       → alias:reactjs   （若採用節點）
 ### Step 0 — Schema 與規則鎖定
 
 **負責人：** 兩人共同  
-**輸入：** 比賽命題、資料欄位說明  
-**輸出：** Schema v0.1、抽取 JSON 契約、train cutoff、品質政策  
+**輸入：** 比賽命題 PDF、工作坊簡報、實際 CSV / README、主辦現場補充
+
+**輸出：** Schema v0.1、抽取 JSON 契約、來源權威矩陣、train cutoff 決策、品質政策
 
 **完成定義（DoD）：**
 
 - [ ] 節點 / 邊清單已勾選
-- [ ] ID 規則已寫死
+- [ ] Node / edge deterministic ID 或 key 規則已寫死
 - [ ] A/B 介面格式已示例
+- [ ] cutoff timestamp、邊界、時區、依據與 snapshot 限制已記錄
+- [ ] 若主辦尚未提供 cutoff，已標示 `cutoff_status=unresolved`，且禁止全量 train graph
 - [ ] fail 條件已列出
+- [ ] LLM 在圖譜建構中的必要角色與 ablation 已定義
 
 ---
 
@@ -205,19 +323,23 @@ alias:<normalized_alias>       → alias:reactjs   （若採用節點）
 **工作內容：**
 
 1. 解析 `職缺最後修改時間`
-2. 依比賽 / 工作坊統一切分取出 train JD
-3. 保留建圖必要欄位
-4. 對齊 Occupation 代碼或名稱
+2. 依主辦正式統一切分取出 train JD；資料包的 2026-06-01～06-07 範圍不可直接當 cutoff
+3. 將 naive timestamp 依已決時區轉為 timezone-aware timestamp
+4. 保留建圖必要欄位並計算 `content_hash`、`source_snapshot_id`、`train_eligible`
+5. 以完整職務三級 tuple 對齊 Occupation `CodeNo`
+6. 輸出 cutoff 前後筆數、最早/最晚時間與排除原因
 
 **關鍵決策：**
 
 | 決策 | 建議 |
 |------|------|
-| cutoff 以哪個時間欄為準 | 預設 `職缺最後修改時間`；若主辦另有定義則跟公告 |
+| cutoff 以哪個時間欄為準 | 以主辦正式切分規則為準；目前實際資料只提供 `職缺最後修改時間`，不可假設 `posted_at` |
+| cutoff 尚未公布 | 只做固定 job_id 的 smoke / profiling；不得宣稱 train-only 全量圖完成 |
+| 時區 | 主辦未指定時暫記假設 `Asia/Taipei`，並在 manifest 明示 |
 | 先全量還是 smoke | 先 1k / 10k smoke，再全量 |
 | jobs scope | 優先「有可用文字內容的 train JD」 |
 
-**風險：** 切分錯誤 = 整張圖可能因洩漏作廢。
+**風險：** 切分錯誤 = 整張圖可能因洩漏作廢。且目前只有最新 JD 快照、沒有版本歷史；即使排除 `last_modified_at > cutoff`，也要在文件中揭露無法完全重建 cutoff 當時 JD 內容的限制。
 
 ---
 
@@ -231,40 +353,48 @@ alias:<normalized_alias>       → alias:reactjs   （若採用節點）
 
 來源：`電腦技能資料`、`工作技能`、`專業證照`
 
-- 依逗號 / 分號 / 換行切分
+- 依來源欄位使用不同 parser；ASCII comma 是主要 delimiter，但不可把所有 `、`、`／`、全形逗號無條件切開
 - 清洗空白與 `NULL`
-- 初步標記 `requirement`（結構化欄位預設可先 `mentioned` 或依欄位語意調整）
+- `電腦技能資料` / `工作技能` 先建立高 precision Skill mention
+- `專業證照` 路由到 `Credential`；不得與一般 Skill 無標記混合
+- 結構化欄位無法判定必要程度時標記 `requirement_level=unspecified`
 
 #### 2B. 非結構化抽取（第二波）
 
 來源：`職務名稱` + `職務內容` + `附加條件`
 
-可選技術：
+建議技術：
 
 1. **Phrase matching**：用 skill 詞表掃全文（高可控）
-2. **LLM 結構化抽取**：輸出 strict JSON；需記錄失敗模式（幻覺、誤合併、層級錯置）
+2. **LLM 結構化抽取 / 驗證**：輸出 strict JSON；需記錄失敗模式（幻覺、誤合併、層級錯置、中英縮寫歧義）
 
-#### REQUIRES / PREFERS / MENTIONS 判定建議
+LLM 是命題要求的圖譜核心模組，不能只當展示。MVP 可先用規則取得 seed，再由 LLM 負責至少一項必要能力，例如非結構化技能抽取、同義詞候選驗證、技能分類或關係判斷，並預留「關閉 LLM 圖譜步驟」的 ablation。
+
+#### requirement_level 判定建議
 
 | 訊號 | 判定 |
 |------|------|
 | 必備、需熟悉、具備、條件 | `required` |
 | 加分、佳、優先、歡迎 | `preferred` |
-| 僅列出或正文順帶提及、不確定 | `mentioned` |
+| 僅列出、正文順帶提及或無法確定 | `unspecified` |
+
+「是否必要」與「是否只是被提到」不可共用同一 enum；來源位置由 `source_field` 表達，否定或不確定語氣由 `assertion_status` 表達。
 
 **關鍵決策：**
 
 | 決策 | 建議 |
 |------|------|
-| 是否一開始就上 LLM | 先規則 + 結構化；LLM 補漏 |
+| LLM 使用順序 | 規則 / 結構化先建立 seed，LLM 負責必要的補抽、驗證、分類或關係判斷 |
 | evidence 是否必填 | 必填 |
 | 批次策略 | 1k → 10k → 全量 |
 
 **完成定義：**
 
-- [ ] 每筆都有 `job_id` + `skills[]`
+- [ ] 每筆都有 `job_id` + `skills[]`，證照另有 `credentials[]` 或明確 type
+- [ ] 每個 mention 都有 `mention_id`、`source_field`、evidence、extractor version
 - [ ] 隨機抽 50 筆人工抽查通過率可接受
-- [ ] 已知失敗案例有清單（供比賽說明）
+- [ ] LLM 與非 LLM 抽取的差異可被量化
+- [ ] 已知失敗案例與防護有清單（供比賽說明）
 
 ---
 
@@ -276,7 +406,9 @@ alias:<normalized_alias>       → alias:reactjs   （若採用節點）
 
 - `skill_dictionary`
 - `canonicalization_audit`
-- alias 對照（字典或 `ALIAS_OF` 邊）
+- `credential_dictionary`
+- 版本化 alias 對照字典（MVP 預設不建 Alias node）
+- normalized mentions：補上 `canonical_id`, `canonicalization_status`（`accepted` / `quarantined` / `rejected`）, `dictionary_version`
 
 **建議流程：**
 
@@ -288,6 +420,8 @@ raw_mention
   → verifier（保護對、門檻）
   → canonical skill
 ```
+
+正規化不得刪除 `C++`、`C#`、`.NET`、`Node.js` 等語意標點。若 registry key 衝突，禁止自動覆蓋；需 fail 或 quarantine 並輸出 audit。
 
 **保護對（不可合併）示例：**
 
@@ -305,34 +439,66 @@ raw_mention
 | 合併策略 | **precision-first：寧可漏併，不要誤併** |
 | 泛用技能（溝通、認真負責） | 不進圖，或極低權重且不進 CORE_SKILL |
 | 中英混寫 | alias 字典收斂到單一 canonical |
+| 證照 | 路由至 Credential registry；不得與一般 Skill 靜默合併 |
 
 ---
 
-### Step 4 — Job–Skill / Job–Occupation 邊組裝
+### Step 4 — 語意邊與職類階層組裝
 
 **負責人：** B  
 **輸入：** 正規化後的 mentions + `train_jobs`  
-**輸出：** Job–Skill 邊、Job–Occupation 邊（中間表或直接進 edges）
+**輸出：** `HAS_SKILL`、`IN_OCCUPATION`、`SUBCATEGORY_OF`、`REQUIRES_CREDENTIAL`（中間表或直接進 edges）
 
 **規則建議：**
 
-1. 同一 `(job, skill)` 多次出現 → 取最強 requirement：  
-   `required > preferred > mentioned`
-2. 邊保留：`weight`, `evidence`, `confidence`, `method`, `source_job_id`
-3. Occupation：由職務分類建立 `INSTANCE_OF`
+1. 同一 `(job, skill)` 多次出現 → 物化一條 `HAS_SKILL`，聚合後 requirement 採 `required > preferred > unspecified`
+2. 不刪除原始 mentions；只聚合 accepted mentions，邊保留 `evidence_refs`、`evidence_count`、`source_fields`、`max(confidence)` 與 extractor version
+3. 語意邊不寫死 `.72` / `.45` 等 ranking weight；權重放在 ranking config
+4. Occupation 以 `(職務大類, 職務中類, 職務小類)` 對 `CodeNameC/B/A` exact match，連到最細可解析 `CodeNo`
+5. `美編設計` 雙重匹配採明文化 deterministic 規則（目前建議選較具體的 `230100`），並記 `mapping_status=resolved_ambiguity`
+6. 三級分類全空時不建立 `IN_OCCUPATION`；列 warn，不建立 `occ:unknown` supernode
+7. 依 `CodeNo` 建立小類 → 中類 → 大類的 `SUBCATEGORY_OF`
 
 **完成定義：**
 
-- [ ] 每條 Job–Skill 邊都能追溯 evidence
-- [ ] 無指向不存在 Skill / Job 的邊
+- [ ] 每條 `HAS_SKILL` / `REQUIRES_CREDENTIAL` 都能追溯 evidence
+- [ ] 每條 `IN_OCCUPATION` 都能追溯 tuple → CodeNo 映射結果
+- [ ] 無指向不存在 Job / Skill / Credential / Occupation 的邊
 
 ---
 
 ### Step 5 — 統計邊（共現 / 核心技能）
 
 **負責人：** B；A 協助審核泛用技能黑名單  
-**輸入：** train-only 的 Job–Skill 歸屬  
+**輸入：** train-only 的 `HAS_SKILL` 歸屬
 **輸出：** `CO_OCCURS_WITH`、`CORE_SKILL`
+
+#### Statistical eligibility（共現與核心技能共用）
+
+統計邊不得直接使用所有 `HAS_SKILL`。先在 accepted mentions 上套用同一個 `statistical_eligible` policy；同一 `(job, skill)` 只要有至少一筆 eligible mention，該 skill 才進入該 Job 的統計 skill set。
+
+```text
+statistical_eligible =
+  assertion_status == affirmed
+  AND canonicalization_status == accepted
+  AND confidence >= extraction_config.threshold_by_method[method]
+  AND (
+    requirement_level IN {required, preferred}
+    OR (
+      requirement_level == unspecified
+      AND source_field IN {電腦技能資料, 工作技能}
+    )
+  )
+```
+
+一律排除：
+
+- `negated` / `uncertain`、quarantined mention
+- 非結構化 `職務名稱` / `職務內容` / `附加條件` 中的 `unspecified`
+- `Credential`
+- 已決的泛用軟技能黑名單
+
+此 policy 與 method thresholds 必須版本化並寫入 manifest；`CO_OCCURS_WITH` 與 `CORE_SKILL` 不得各自實作不同 eligibility 規則。
 
 #### 5A. Skill–Skill 共現
 
@@ -340,7 +506,7 @@ raw_mention
 
 - `count`, `support`
 - `PMI`, `NPMI`
-- 可選 `P(B|A)`, `P(A|B)`
+- `P(B|A)`, `P(A|B)`
 
 建議起步門檻（可調）：
 
@@ -348,15 +514,23 @@ raw_mention
 - `NPMI >= 0.1`
 - 每個 skill 只保留 top-N 共現（控制 supernode）
 
+`CO_OCCURS_WITH` 邏輯上是無向邊；匯出時使用 `(min(skill_a, skill_b), max(skill_a, skill_b))` 作唯一 key，並同時保存兩個方向的 conditional probability。
+
 #### 5B. Occupation 核心技能
 
-在同一 Occupation 內計算 skill 出現率：
+使用 `SUBCATEGORY_OF` 對 Occupation 做多層統計：
+
+- `minor`：`aggregation_scope=direct`，使用直接以 `IN_OCCUPATION` 歸屬該節點的 Jobs。
+- `middle` / `major`：`aggregation_scope=descendants`，使用直接歸屬該節點的 Jobs，加上所有 descendant Occupation 的 Jobs；同一 Job 去重一次。
+- 若未來同一 Occupation 同時輸出 direct 與 descendants 兩種結果，edge key 必須包含 `aggregation_scope`。
+
+在每個 scope 內計算 skill 出現率：
 
 ```text
-core_skill_weight = (# jobs in occ with skill) / (# jobs in occ)
+core_skill_rate = (# train jobs in occ with skill) / (# train jobs in occ)
 ```
 
-可再拆 `required_rate` / `preferred_rate`。
+以 `Occupation → Skill` 儲存，並同時保留 `occupation_level`、`aggregation_scope`、`job_count`、`skill_job_count`、`required_rate`、`train_window`；只有比例而沒有分母會讓小樣本職類產生誤導性的 1.0。
 
 **關鍵決策：**
 
@@ -364,7 +538,7 @@ core_skill_weight = (# jobs in occ with skill) / (# jobs in occ)
 |------|------|
 | 門檻要多嚴 | 先保守；圖太稀疏再放寬 |
 | supernode | 必做 top-N 或 IDF 降權 |
-| Excel / Office / 中文 | 多數情況降權或排除 CORE_SKILL |
+| Excel / Office | 保留 query 能力；依 global DF/IDF 與職類內 salience 降權，不一律刪除 |
 
 ---
 
@@ -378,22 +552,33 @@ graph/
   nodes.csv
   edges.csv
   graph_manifest.json
+  mentions.jsonl
   skill_dictionary.csv
+  credential_dictionary.csv
+  alias_dictionary.csv
+  extraction_config.yaml
   canonicalization_audit.csv
+  occupation_mapping_audit.csv
+  ranking_config.yaml
 ```
 
 `graph_manifest.json` 至少包含：
 
-- schema 版本
-- train 時間區間
+- schema / extraction / dictionary 版本
+- confidence policy、method thresholds 與 statistical eligibility policy 版本
+- `cutoff_status`, `train_cutoff`, cutoff 邊界、時區與正式依據
+- `source_snapshot_id` 與 snapshot 限制
+- train 時間區間、納入 / 排除筆數及原因
 - node / edge 計數（依 type）
-- 輸入資料 hash 或檔名版本
-- 是否宣稱 `contains_test_jd: false`
+- 每個輸入檔的 hash、檔名版本與相關比賽文件版本
+- `contains_post_cutoff_jd` 的實測結果；只有驗證為 `false` 才可宣稱 train-only
+- LLM model / prompt / inference config 版本與 random seed（若適用）
 
 儲存策略（Hackathon）：
 
-1. **先 CSV + in-memory retrieval**（最快驗證）
-2. 有餘力再做 Neptune / 圖資料庫匯入計畫
+1. **先 CSV / Parquet + typed adjacency / inverted index**（最快驗證）
+2. 目前有 121 萬以上 Job，不建議把全圖直接載入 NetworkX Python object graph
+3. 有餘力再做 Neptune / 圖資料庫匯入計畫
 
 ---
 
@@ -405,12 +590,22 @@ graph/
 | 檢查項 | 建議處置 |
 |--------|----------|
 | test JD 出現在圖中 | **fail** |
+| cutoff 未決卻宣稱 train-only 全量圖完成 | **fail** |
+| manifest 缺 cutoff 邊界、時區、snapshot 或輸入 hash | **fail** |
 | dangling edge | **fail** |
 | duplicate node/edge ID | **fail** |
+| normalized key collision 未處理 | **fail** |
+| `requirement_level` / `assertion_status` 非法值 | **fail** |
+| `confidence` 不在 `[0, 1]` 或 method threshold 未版本化 | **fail** |
+| 低於 threshold / quarantined mention 被物化成 graph edge | **fail** |
 | protected pair 被合併 | **fail** 或 quarantine |
-| evidence 不在原文 | quarantine / warn |
+| evidence 不在指定 `source_field` 原文 | quarantine |
+| Occupation 無法匹配 / 多重匹配 | quarantine；套用已決規則後可降為 warn |
+| `CO_OCCURS_WITH` self-loop、NaN / inf 或重複 pair | **fail** |
+| CO_OCCURS / CORE_SKILL 使用不同或未記錄的 statistical eligibility policy | **fail** |
 | orphan Skill | warn |
 | supernode 超標 | warn + 強制截斷後重跑 |
+| LLM 輸出不符合 JSON schema / 幻覺 mention | quarantine + 記錄失敗模式 |
 
 **完成定義：** 無 fail 項，方可進入 Step 8。
 
@@ -434,22 +629,29 @@ graph/
 
 ```text
 1. 解析到哪些 Skill / Occupation
-2. 0-hop：Skill → Job 命中數
+2. 0-hop：由 Skill / Occupation 反向走到 Job 的命中數
 3. 1-hop：CO_OCCURS / CORE_SKILL 擴展
 4. Top 5 job_id + path 解釋
 5. 明顯錯誤案例
+6. 同一 query 關閉 graph features 後的排序差異
 ```
 
 **比賽交付用 trace 範例（格式可調整）：**
 
 ```text
 query: "node.js 後端"
-→ alias "node.js" ALIAS_OF Skill:Node.js
-→ Skill:Node.js -REQUIRES→ Job:132045128 (weight=1.0)
-→ Skill:Node.js -CO_OCCURS_WITH→ Skill:TypeScript -PREFERS→ Job:132111693
-→ Occupation:後端工程師 boost via INSTANCE_OF
-→ ranked jobs: [132045128, 132111693, ...]
+→ query normalization（alias dictionary）: "node.js" → skill:nodejs
+→ occupation normalization（CodeName / CodeAlike）: "後端" → occ:140215（後端工程師）
+→ skill:nodejs <-[HAS_SKILL {requirement_level: required}]- job:57745782
+→ skill:nodejs -[CO_OCCURS_WITH {npmi: ...}]-> skill:typescript
+→ skill:typescript <-[HAS_SKILL]- job:75669246
+→ occ:140215 -[CORE_SKILL {aggregation_scope: direct, rate: ...}]-> skill:nodejs
+→ occ:140215 <-[IN_OCCUPATION]- job:...
+→ ranker 聚合 exact_skill、expanded_skill、occupation_match、path_score
+→ ranked jobs: [57745782, 75669246, ...]
 ```
+
+上例中的 alias normalization 是圖外前處理，因此不畫 `ALIAS_OF`。`HAS_SKILL` / `IN_OCCUPATION` 的 schema 方向是 Job → Skill / Occupation；從 query 節點找 Job 時以 `<-` 明確表示反向 traversal。實際交付 trace 必須使用通過 train cutoff 的 Job，並填入真實 edge properties，不可保留 `...`。
 
 ---
 
@@ -460,7 +662,9 @@ query: "node.js 後端"
 
 - Schema 正式版（可附 yaml）
 - 至少 1 個完整 traversal / aggregation trace
-- LLM / 抽取失敗模式與防護說明（若有用生成式 AI）
+- LLM 在技能抽取 / 正規化 / 分類 / 關係建構中的必要角色
+- LLM / 抽取失敗模式與防護說明
+- 「有圖譜 vs 無圖譜」與「關閉 LLM 圖譜步驟」的可重現 ablation
 - 給排序組的介面說明：圖特徵有哪些、如何讀 edges
 
 ---
@@ -471,18 +675,23 @@ query: "node.js 後端"
 
 | # | 決策 | 選項 | 建議預設 | 已決 |
 |---|------|------|----------|------|
-| 1 | MVP 節點範圍 | 極簡 Job+Skill / +Occupation / +Alias+Category | Job+Skill+Occupation | |
-| 2 | Alias 實作 | 字典 / Alias 節點 | 先字典 | |
-| 3 | ID 規則 | 顯示名 / hash | `type:normalized` | |
-| 4 | train cutoff | 日期時間 | 跟比賽公告 | |
-| 5 | 抽取策略 | 規則優先 / LLM 優先 / 混合 | 規則→LLM 補漏 | |
-| 6 | requirement 不確定時 | required / preferred / mentioned | mentioned | |
-| 7 | 合併策略 | precision-first / recall-first | precision-first | |
-| 8 | 共現門檻 | count / NPMI / top-N | count≥5, NPMI≥0.1, top-N | |
-| 9 | 泛用技能 | 進圖 / 降權 / 排除 | 排除 CORE；慎進共現 | |
-| 10 | 圖儲存 | CSV / NetworkX / Neptune | CSV 先 | |
-| 11 | fail 條件 | 見 Step 7 | 洩漏與 dangling 必 fail | |
-| 12 | schema 變更權 | 單人 / 雙人同意 | **雙人同意** | |
+| 1 | MVP 節點範圍 | Job / Skill / Occupation / Credential / Alias | Job+Skill+Occupation+Credential；Alias 用字典 | |
+| 2 | MVP edge | 多 edge type / 單一屬性邊 | `HAS_SKILL` + `IN_OCCUPATION` + `SUBCATEGORY_OF` + `REQUIRES_CREDENTIAL` | |
+| 3 | Alias 實作 | 字典 / Alias 節點 | 版本化字典；Skill / Occupation 共用 schema，query normalization 在圖外 | |
+| 4 | ID 規則 | 顯示名 / registry / hash | Job 用原 ID、Occupation 用 CodeNo、Skill/Credential 用 registry key | |
+| 5 | train cutoff | 日期時間、邊界、時區、依據 | 跟主辦正式切分；未公布則 `unresolved` 且禁止全量建圖 | |
+| 6 | Confidence 用途 | ranking / quarantine / 兩者 | extraction accept/quarantine；不直接進 ranking；threshold by method | |
+| 7 | Edge confidence 聚合 | max / mean / 機率合併 | accepted mentions 取 `max`，支持數另存 `evidence_count` | |
+| 8 | 抽取策略 | 規則優先 / LLM 優先 / 混合 | 規則 seed + LLM 必要抽取/驗證/分類 + ablation | |
+| 9 | requirement 不確定時 | required / preferred / unspecified | `unspecified` | |
+| 10 | Statistical eligibility | 全部技能 / requirement 篩選 / source-aware | affirmed + accepted；required/preferred，或高可信結構化 unspecified | |
+| 11 | Occupation 聚合 | 只算 leaf / 多層 direct / descendants | minor=direct；middle/major=direct + descendants 去重 | |
+| 12 | 合併策略 | precision-first / recall-first | precision-first | |
+| 13 | 共現門檻 | count / NPMI / top-N | count≥5, NPMI≥0.1, top-N 待 smoke 校準 | |
+| 14 | 泛用技能 | 進圖 / 降權 / 排除 | 保留但依 DF/IDF 與職類 salience 降權 | |
+| 15 | 圖儲存 | CSV / Parquet / NetworkX / Neptune | CSV/Parquet + typed adjacency；避免全量 NetworkX | |
+| 16 | fail 條件 | 見 Step 7 | 洩漏、未決 cutoff 誤宣稱、dangling、collision 必 fail | |
+| 17 | schema 變更權 | 單人 / 雙人同意 | **雙人同意** | |
 
 ---
 
@@ -492,8 +701,8 @@ query: "node.js 後端"
 
 | 角色 | 暱稱 | 核心職責 |
 |------|------|----------|
-| **A — Content Graph** | 內容側 | 抽取、requirement 判定、alias 字典、evidence 品質、LLM prompt / 失敗模式 |
-| **B — Structure Graph** | 結構側 | train 切分、ID、邊組裝、共現/CORE_SKILL、品質閘門、匯出、in-memory retrieval |
+| **A — Content Graph** | 內容側 | Skill / Credential 抽取、requirement 判定、alias/registry、evidence 品質、LLM prompt / 失敗模式 / ablation |
+| **B — Structure Graph** | 結構側 | train 切分、Occupation 映射、ID/edge key、邊組裝、共現/CORE_SKILL、品質閘門、匯出、retrieval |
 
 ### 7.2 責任邊界（避免踩線）
 
@@ -506,27 +715,27 @@ query: "node.js 後端"
 ### 7.3 介面契約
 
 ```text
-A 唯一輸出 ──► extractions.jsonl（契約見 3.4）
-B 唯一輸出 ──► graph/nodes.csv + edges.csv + manifest + quality report
-共同輸出 ──► schema 文件 + traversal trace
+A 主要輸出 ──► extractions.jsonl + extraction_config + skill/credential/alias dictionaries（契約見 3.4–3.5）
+B 主要輸出 ──► graph/nodes + edges + manifest + mapping/canonicalization audit + quality report
+共同輸出 ──► schema 文件 + traversal trace + graph/no-graph 與 LLM/no-LLM ablation
 ```
 
 ### 7.4 建議時程（可依比賽日程壓縮）
 
 ```text
 Day 0（共同 90 分）
-  Schema v0.1 + JSON 契約 + cutoff + 分工確認
+  權威來源矩陣 + Schema v0.1 + JSON 契約 + cutoff 狀態 + 分工確認
 
 Day 1–2
-  A: 結構化抽取 + 1k smoke extractions
-  B: train_jobs 切分 + graph skeleton（可 ingest A 的 JSON）
+  A: Skill/Credential 結構化抽取 + 1k smoke extractions
+  B: cutoff 已決才做 train_jobs；否則做固定 job_id smoke + Occupation mapping
 
 Day 3–4
-  A: 全文 phrase / LLM 補抽 + alias 字典擴充
-  B: Job–Skill / Occupation 邊 + 品質檢查 v1
+  A: 全文 phrase / LLM 抽取驗證 + alias/registry 擴充
+  B: HAS_SKILL / IN_OCCUPATION / hierarchy 邊 + 品質檢查 v1
 
 Day 5–6
-  A: protected pairs 審核 + 失敗案例分析
+  A: protected pairs 審核 + LLM 失敗案例與 ablation
   B: 共現 / CORE_SKILL + supernode 控制
 
 Day 7（共同）
@@ -554,14 +763,14 @@ Step 1: train_jobs（B）
         │
         ▼
 Step 2: extractions.jsonl（A）
-        structured → phrase → LLM
+        structured → phrase → LLM extraction/verification
         │
         ▼
 Step 3: canonicalize（A+B）
-        alias + protected pairs + audit
+        skill/credential registry + alias + protected pairs + audit
         │
         ▼
-Step 4: Job–Skill / Job–Occupation（B）
+Step 4: HAS_SKILL / IN_OCCUPATION / hierarchy（B）
         │
         ▼
 Step 5: CO_OCCURS / CORE_SKILL（B）
@@ -581,10 +790,23 @@ Step 8–9: smoke traversal + docs（A+B）
 
 - [ ] Node types：______________________________
 - [ ] Edge types：______________________________
-- [ ] ID 規則：______________________________
-- [ ] train cutoff：______________________________
+- [ ] Node / edge key 規則：______________________________
+- [ ] train cutoff：________________；邊界：`<` / `<=`；時區：________________
+- [ ] cutoff 正式依據：________________；狀態：resolved / unresolved
+- [ ] source snapshot / hash：______________________________
 - [ ] 抽取 JSON 版本：`v0.1`
+- [ ] confidence 用途：accept/quarantine；直接進 ranking：否
+- [ ] method thresholds：structured=___, phrase=___, llm=___；config version：________
+- [ ] edge confidence 聚合：accepted mentions 的 `max`
+- [ ] LLM 必要角色：抽取 / 正規化驗證 / 分類 / 關係判斷：________________
+- [ ] LLM ablation：______________________________
+- [ ] requirement enum：`required` / `preferred` / `unspecified`
+- [ ] Credential：獨立節點 / `Skill.skill_kind=credential`
+- [ ] Alias：版本化字典 / graph node；schema/version：________________
+- [ ] CodeAlike delimiter / ambiguity policy 已確認
 - [ ] 合併策略：precision-first / 其他：________
+- [ ] statistical_eligible policy/version：______________________________
+- [ ] Occupation aggregation：minor=direct；middle/major=direct+descendants
 - [ ] 共現門檻：count=___, NPMI=___, top-N=___
 - [ ] 圖輸出路徑：`graph/` 或其他：________
 - [ ] fail 條件已確認
@@ -597,13 +819,20 @@ Step 8–9: smoke traversal + docs（A+B）
 ## 10. 常見陷阱
 
 1. **用 test JD 建圖** → 洩漏，可能整項不計分  
-2. **未先定 schema 就分頭寫** → 合併成本爆炸  
-3. **alias 過度合併** → Java / JavaScript 變成同一個 skill  
-4. **泛用技能變成 supernode** → 圖失去辨識力  
-5. **沒有 evidence** → 無法答辯、無法做品質檢查  
-6. **建完圖不做 retrieval smoke** → 圖是死資產，NDCG 不會動  
-7. **A/B 搶改同一份 edges** → 用介面契約隔離  
-8. **把瀏覽/應徵直接當 graph 邊** → 行為訊號應留給排序模組，避免把偏差寫進圖結構  
+2. **把資料包 6/1～6/7 當成 train window** → 主辦尚未公布 cutoff，不得自行推定
+3. **把最後修改時間當成刊登時間** → 實際資料沒有 `posted_at`
+4. **未先定 schema 就分頭寫** → 合併成本爆炸
+5. **alias 過度合併或移除語意標點** → Java / JavaScript、C / C++、Node / Node.js 被誤合併
+6. **把證照當一般 Skill** → 護理師執照與 Python 的語意及 traversal 混亂
+7. **泛用技能變成 supernode** → 圖失去辨識力
+8. **只留聚合邊、不留 mentions/evidence** → 無法答辯、重算或做品質檢查
+9. **把 extraction confidence 直接乘進 ranking** → 抽取不確定性與職缺相關性混為一談
+10. **所有 HAS_SKILL 都進共現統計** → 弱訊號、否定與正文 unspecified 稀釋真正關聯
+11. **trace 方向與 schema 相反** → 反向 traversal 必須用 `<-` 明示
+12. **LLM 只是裝飾** → 不符命題精神，也無法證明 graph/LLM 對 NDCG 的必要性
+13. **建完圖不做 retrieval smoke / ablation** → 圖是死資產，無法證明對排序有用
+14. **A/B 搶改同一份 edges** → 用介面契約隔離
+15. **把瀏覽/應徵直接當 graph 邊** → 行為訊號應留給排序模組，避免把曝光偏差寫進圖結構
 
 ---
 
@@ -614,9 +843,10 @@ Skill Graph 完成後，排序模組通常需要：
 | 項目 | 說明 |
 |------|------|
 | 圖檔 | `nodes.csv` / `edges.csv` |
-| Query → Skill 解析 | alias / occupation 對照 |
-| Graph features | 如 exact skill count、path score、occupation match |
-| Ablation | 關掉 graph features 仍可跑 baseline |
+| Query → Skill / Occupation 解析 | 版本化 alias dictionary、`CodeName` / `CodeAlike` 對照 |
+| Graph features | exact skill count、expanded skill、path score、occupation match、credential match |
+| Feature provenance | 每個分數能回指 traversal path、edge properties 與 graph version |
+| Ablation | 關掉 graph features 與關閉 LLM 建圖步驟時，baseline 仍可重現 |
 
 API 層不需要知道圖內部細節；只要最終能對 `query` / `location_code` / `duty_code` 回傳排序後的 `job_id`。
 
@@ -636,10 +866,14 @@ API 層不需要知道圖內部細節；只要最終能對 `query` / `location_c
 | 問題 | 答案 |
 |------|------|
 | 要不要先討論 schema？ | **要，Day 0 鎖定 v0.1** |
-| 主要用什麼資料？ | train 期 `職缺.csv` + `職務對照表` |
+| 主要用什麼資料？ | 主辦正式 train 期 `職缺.csv` + `職務對照表`；資料包週期不等於 train cutoff |
 | 步驟？ | Schema → train 資料 → 抽取 → 正規化 → 組邊 → 統計邊 → 匯出 → 品質 → smoke → 文件 |
-| 怎麼分工？ | A 內容抽取與 alias；B 結構組裝、統計邊、品質與匯出；共同負責 schema 與 smoke |
-| 何時算建圖完成？ | 品質閘門通過 + 固定 query 能產出可解釋 traversal |
+| Schema 核心？ | Job / Skill / Occupation / Credential；HAS_SKILL / IN_OCCUPATION / SUBCATEGORY_OF / REQUIRES_CREDENTIAL |
+| Confidence 怎麼用？ | 只做 extraction accept/quarantine，門檻依 method 版本化；v0.1 不直接進 ranking |
+| 統計邊吃哪些技能？ | 共用 `statistical_eligible`：affirmed + accepted + 達門檻，並依 requirement / source 篩選 |
+| Occupation 怎麼聚合？ | minor 用 direct jobs；middle / major 使用 direct + descendant jobs 去重 |
+| 怎麼分工？ | A 負責內容抽取、registry、LLM 與 evidence；B 負責切分、Occupation、組邊、統計與品質；共同負責 schema、trace、ablation |
+| 何時算建圖完成？ | cutoff 已決 + 品質閘門通過 + 固定 query 有可解釋 traversal + graph/no-graph 與 LLM/no-LLM ablation 可重現 |
 
 ---
 
@@ -647,12 +881,15 @@ API 層不需要知道圖內部細節；只要最終能對 `query` / `location_c
 
 若只能做一條最短路徑：
 
-1. Day 0 鎖定 Job / Skill / Occupation + REQUIRES/PREFERS/MENTIONS/INSTANCE_OF  
-2. 只用三個結構化技能欄位抽取  
-3. 小 alias 字典 + protected pairs  
-4. 匯出 CSV  
-5. 不做共現也先做 0-hop retrieval smoke  
-6. 有時間再加 CO_OCCURS / CORE_SKILL / LLM  
+1. Day 0 鎖定 Job / Skill / Occupation / Credential + HAS_SKILL / IN_OCCUPATION / SUBCATEGORY_OF / REQUIRES_CREDENTIAL
+2. cutoff 未決只做固定 job_id smoke；cutoff 已決才建全量 train graph
+3. 先抽取三個結構化能力欄，證照獨立路由
+4. 鎖定 method-specific confidence thresholds 與共用 `statistical_eligible` policy
+5. 用 LLM 驗證同義詞或補抽非結構化技能，保留 prompt/version/evidence 與失敗案例
+6. 小型版本化 alias / registry + protected pairs；CodeAlike 使用同一 alias schema
+7. 匯出 CSV/Parquet + extraction config + manifest + quality report
+8. 先做 0-hop retrieval trace 與 graph/no-graph、LLM/no-LLM ablation
+9. 有時間再加 `CO_OCCURS_WITH` / `CORE_SKILL`
 
 ---
 
@@ -664,4 +901,4 @@ API 層不需要知道圖內部細節；只要最終能對 `query` / `location_c
 | 更新時機 | Schema 升版、分工調整、品質政策變更 |
 | 相關路徑 | `docs/SKILL_GRAPH_PLAYBOOK.md`（本文件） |
 
-若本文件與比賽現場補充說明衝突，**以主辦單位現場 / 正式公告為準**，並回頭更新本文件的 cutoff 與交付條款。
+若來源互相衝突，先依第 1.1 節的用途分工處理：交付硬性規格以命題文件為準，實際資料欄位與 API 以工作坊 / CSV 為準；8/1 正式補充可補足細節，但不得在沒有明文時自行推定其覆蓋命題文件。任何 cutoff 或交付條款變更都要附來源並回寫本文件。
