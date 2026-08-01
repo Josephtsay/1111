@@ -20,8 +20,7 @@ Skill Graph 是本命題的核心資產：把職缺文字中的技能抽成結�
 
 **硬性原則（比賽）：**
 
-- Graph **只能使用 train 期 JD** 建構
-- **不得**使用 test 期間 JD 建圖（違者相關指標可能不計分）
+- 命題文件書面規定圖譜只能用 train 期 JD 建構、不得使用 test 期間 JD；**已向主辦方確認全部職缺資料皆可用於建圖，不需切分 train/test**，取代原書面規定（來源請補記於 1.1 節，供最終交付佐證）
 - 提案須包含 **graph schema** 與至少一個 **遍歷 / 聚合 trace** 範例
 - 最終需能做「有圖譜 vs 無圖譜」的 ablation
 - LLM 必須實際參與技能抽取、正規化、分類或關係判斷，並揭露失敗模式與防護；不能只是附加展示
@@ -29,20 +28,22 @@ Skill Graph 是本命題的核心資產：把職缺文字中的技能抽成結�
 **創意與安全原則：**
 
 - 創意必須形成「創新假設 → feature flag → ablation → 指標差異 → traversal trace」的可驗證鏈條，不能只增加 edge type 或展示頁
-- LLM 不得只憑模型常識直接寫入正式圖；新關係必須同時有 train 語料支持、evidence、版本與 verifier 結果
-- test JD、test 行為與 test query 不得回寫節點、邊、alias、registry 或統計量；OOV query 只能在查詢期間對既有節點做保守解析或 fallback
+- LLM 不得只憑模型常識直接寫入正式圖；新關係必須同時有職缺語料佐證、evidence、版本與 verifier 結果
+- 職缺資料全量可用於建圖，但 query／使用者行為的 test 切分（見 `dataset_1111.py`）仍然存在：test 期查詢、點擊、應徵行為不得回寫節點、邊、alias、registry 或統計量；OOV query 只能在查詢期間對既有節點做保守解析或 fallback
 - 安全閘門優先於創意功能：任何新設計若提高 leakage、誤連或不可解釋風險，預設關閉或留在 candidate / quarantine，不為創意分犧牲穩定性
 
 ### 1.1 權威資料來源與衝突處理
 
 | 優先用途 | 來源 | 本文件採用方式 |
 |----------|------|----------------|
-| 比賽約束與交付物 | `1111 人力銀行 命題文件 - 2026 雲湧智生：臺灣生成式 AI 應用黑客松競賽.pdf` | 視為 graph train-only、LLM 核心角色、schema/trace、ablation 等約束的權威來源 |
+| 比賽約束與交付物 | `1111 人力銀行 命題文件 - 2026 雲湧智生：臺灣生成式 AI 應用黑客松競賽.pdf` | 視為 LLM 核心角色、schema/trace、ablation 等約束的權威來源；圖譜 train-only 條款已由主辦方口頭更新，見下方差異註記 |
 | 實際資料欄位、API、評估口徑 | `1111 人力銀行 -黑客松企業數據工作坊簡報.pdf` | 使用工作坊公布的實際欄位與 `query/location_code/duty_code` API contract |
 | 實作可用欄位與值域 | `dataset/*.csv`、`dataset/README.md` | 以實際 CSV header、資料型態與值域為準，不假設文件提到但未提供的欄位 |
 | 現場補充 | 8/1 主辦單位正式說明 | 可補充實作細節，但不得自行推定會覆蓋命題文件的交付規格 |
 
 已知文件差異：命題文件預告 JD 含「上架時間戳」，但實際 `職缺.csv` 與工作坊簡報僅提供 `職缺最後修改時間`；工作坊簡報也未列出明確 train/test cutoff。故本文件不得虛構 `posted_at` 或自行指定 cutoff，需在 manifest 中記錄依據與限制。
+
+已知文件差異（2026-08-01 更新）：命題文件書面規定「圖譜僅能使用 train 期內之職缺資料建構，不得使用 test 期間之 JD（違者該指標項不計分）」；經向主辦方確認，**全部職缺資料皆可用於建圖，不需切分 train/test**，取代此條款。此更新目前只有口頭確認，尚未附上可查證來源；建議補上工作坊 Q&A 記錄或 email 回覆連結（欄位待補：______），並在最終交付的 `graph_manifest.json` 與 README 中一併說明依據，避免評審對這條有罰則的規定提出質疑時拿不出根據。此決策僅涉及**職缺（JD）資料**；`userSearchLog` 查詢與行為紀錄的 train/validation/test 切分（見 `dataset_1111.py`）不受影響，仍需維持。
 
 ---
 
@@ -74,7 +75,7 @@ Schema 是兩人共用的合約。若未先對齊就分頭實作，常見後果�
 |--------|------|
 | Schema v0.1 | Node / Edge / 屬性 / ID 規則 |
 | 抽取 JSON 契約 | A 交給 B 的唯一格式 |
-| train cutoff | 時間切分規則、時區、邊界與依據（與主辦正式切分對齊） |
+| 建圖資料範圍 | 已確認全部職缺資料可用，不需切分；query/行為資料仍依 `dataset_1111.py` 切 train/validation/test |
 | 品質政策 | fail / quarantine / warn |
 | Innovation Contract | H1 / H2、feature flags、安全邊界、評估矩陣 |
 | Golden slice | 固定 100–1,000 Job IDs、預期 artifact hash 與 contract test |
@@ -90,12 +91,13 @@ schema_status: frozen
 gate0_status: conditional_pass
 frozen_at: "2026-08-01"
 change_control: two_person_approval
-full_graph_allowed: false
-full_graph_blocker: official_train_cutoff_unresolved
+graph_data_scope: all_jobs_no_split   # 主辦方已確認：建圖不需 train/test 切分（來源待補，見 1.1）
+full_graph_allowed: true
+full_graph_blocker: llm_extraction_throughput   # 阻擋原因已從「train cutoff 未決」改為「LLM 抽取吞吐量／成本」
 golden_slice_allowed: true
 ```
 
-`conditional_pass` 不代表 Schema 未決，而是 Schema 已可供 A/B 開工，但正式 cutoff、執行模型、部分品質門檻、A/B 姓名與 golden slice IDs 尚待填入。這些項目不可以單方面改動 Schema；cutoff 未解決前只允許固定 smoke / golden slice，不允許宣稱全量 train graph 完成。
+`conditional_pass` 不代表 Schema 未決，而是 Schema 已可供 A/B 開工。建圖資料範圍已確認為全部職缺（不受 train/test 切分限制），但正式抽取執行模型、部分品質門檻、A/B 姓名與 golden slice IDs 仍待填入。這些項目不可以單方面改動 Schema。全量資料「可以用」不代表要「一次跑完」：職缺規模達 121 萬筆，LLM 逐筆抽取在時程與成本上做不到一次全量，因此仍建議先跑固定 smoke / golden slice 驗證管線，再分批擴大到結構化欄位全量、最後才是 LLM 增強全量。
 
 ---
 
@@ -118,7 +120,7 @@ golden_slice_allowed: true
 
 - 資料只有 `職缺最後修改時間`，沒有刊登時間；`posted_at` 不得列為必要欄位。
 - 若時程極緊，`Credential` 可暫以 `Skill.skill_kind=credential` 實作，但不可把證照與一般技能無標記混在一起。
-- `train_eligible` 只存在於 Step 1 的 `train_jobs` 中間表，供切分稽核使用。最終 `graph/nodes.csv` 只收錄 `train_eligible=true` 的 Job；非 train 職缺即使帶有 `false` 旗標也不得寫入最終圖。
+- `train_eligible` 現已恆為 `true`（全部職缺皆可用於建圖），欄位保留於 Step 1 的 `jobs` 中間表僅供未來若政策改變時稽核回溯，不再用來排除任何 Job。
 - `global_job_frequency` 由 B 在 Step 5 使用同一份 `statistical_eligible` policy 計算，Step 1–4 可為空值；正式匯出前必須補齊。其分子分母不得與 `CORE_SKILL.rate` 使用不同口徑。
 
 ### 3.2 邊（Edges）
@@ -272,10 +274,10 @@ MVP 的 Skill / Occupation alias 採圖外版本化 `alias_dictionary.csv`，共
 
 | 資料 | 用途 |
 |------|------|
-| `職缺.csv`（**train 期**） | 建圖主來源：標題、內容、技能欄位、職務分類、時間戳 |
+| `職缺.csv`（**全量，不切 train/test**） | 建圖主來源：標題、內容、技能欄位、職務分類、時間戳 |
 | `職務對照表.csv` | Occupation 代碼 / 名稱 / `CodeAlike`（相似職稱） |
 
-`職缺.csv` 是 2026-06-01～06-07 資料包中的主檔，但其 `職缺最後修改時間` 範圍超過該週；**資料包期間不等於 train window**。在主辦正式 cutoff 未確認前，只可做資料剖析與 smoke，不可宣稱已完成 train-only 全量建圖。
+`職缺.csv` 是 2026-06-01～06-07 資料包中的主檔，共 1,218,635 筆；經主辦方確認（來源待補，見 1.1）全部職缺皆可用於建圖，不需再依 `職缺最後修改時間` 排除任何一筆。實務上仍建議分批：先用固定 smoke / golden slice 驗證管線，再擴大到結構化欄位全量，LLM 增強最後做——這是因為 121 萬筆逐筆跑 LLM 在時程與成本上做不到一次全量，**不是**因為資料本身被排除。
 
 ### 4.2 建圖輔助（非圖結構本體）
 
@@ -298,8 +300,8 @@ MVP 的 Skill / Occupation alias 採圖外版本化 `alias_dictionary.csv`，共
 | 項目 | 觀察值 | Schema / 流程影響 |
 |------|--------|-------------------|
 | 職缺數 | 1,218,635；`職缺編號` 全部唯一 | `job:<職缺編號>` 可直接作 deterministic ID |
-| 最後修改時間 | 2024-01-01 00:12:09.827 ～ 2026-06-24 14:59:55.470 | 必須記錄 cutoff、時區、snapshot；不可把資料包週期當 cutoff |
-| 2026-06-07 後修改 | 249,894 筆 | 未確認 train policy 前不得納入 train graph |
+| 最後修改時間 | 2024-01-01 00:12:09.827 ～ 2026-06-24 14:59:55.470 | 全量皆可建圖（來源待補，見 1.1）；仍須記錄 snapshot 與時區供稽核 |
+| 2026-06-07 後修改 | 249,894 筆 | 已確認全量政策，可納入建圖；建議留在後段批次，優先跑覆蓋率高的舊職缺驗證管線 |
 | 任一結構化能力欄非空 | 382,758 筆（31.41%） | 結構化抽取適合先做，但無法單獨提供足夠 recall |
 | `電腦技能資料` | 257,193 筆（21.11%）；約 405 個逗號切分值 | 適合建立高 precision seed dictionary；需控制 Office 類 supernode |
 | `專業證照` | 111,907 筆（9.18%）；約 1,637 個逗號切分值 | 應建 `Credential` 或至少用 `skill_kind=credential` 隔離 |
@@ -313,8 +315,8 @@ MVP 的 Skill / Occupation alias 採圖外版本化 `alias_dictionary.csv`，共
 ## 5. 完整建圖步驟
 
 ```text
-0. Schema、切分、Innovation Contract（兩人共同）
-1. 資料準備（train JD only）
+0. Schema、資料範圍、Innovation Contract（兩人共同）
+1. 資料準備（全量職缺，不切 train/test）
 2. 技能抽取
 3. 技能正規化（canonicalization）
 4. HAS_SKILL / IN_OCCUPATION / hierarchy 邊組裝
@@ -332,18 +334,18 @@ MVP 的 Skill / Occupation alias 採圖外版本化 `alias_dictionary.csv`，共
 **負責人：** 兩人共同  
 **輸入：** 比賽命題 PDF、工作坊簡報、實際 CSV / README、主辦現場補充
 
-**輸出：** Schema v0.1、抽取 JSON 契約、來源權威矩陣、train cutoff 決策、品質政策、Innovation Contract
+**輸出：** Schema v0.1、抽取 JSON 契約、來源權威矩陣、建圖資料範圍決策（全量、不切 train/test）、品質政策、Innovation Contract
 
 #### Innovation Contract（Day 0 一起鎖定）
 
-創意主軸定義為 **Evidence-Calibrated, Query-Adaptive Skill Graph**：LLM 從 train JD 建立有 evidence、可驗證的技能語意；查詢端依意圖選擇最小必要 traversal，而不是對所有 query 固定擴展。這直接回應命題的創意與 GenAI 主題契合評分，但以主指標、安全與可解釋性作啟用條件。
+創意主軸定義為 **Evidence-Calibrated, Query-Adaptive Skill Graph**：LLM 從全量職缺 JD 建立有 evidence、可驗證的技能語意；查詢端依意圖選擇最小必要 traversal，而不是對所有 query 固定擴展。這直接回應命題的創意與 GenAI 主題契合評分，但以主指標、安全與可解釋性作啟用條件。
 
 | 項目 | 建議鎖定內容 |
 |------|--------------|
 | 創新假設 H1 | LLM 抽取 / 正規化驗證能改善 alias、縮寫與 OOV query 的 recall，且不明顯降低 precision |
 | 創新假設 H2 | query-adaptive traversal 比固定 1-hop 擴展有更好的 NDCG@10，並降低錯誤擴展與 latency |
 | Feature flags | `use_graph`, `use_llm_extraction`, `use_llm_relations`, `use_adaptive_traversal` |
-| 安全限制 | train-only；LLM 關係需 dual-signal verification；query-time OOV 不回寫圖；負向條件不得轉成正向 skill |
+| 安全限制 | 職缺全量可用但 query test 切分仍在（見 1.1）；LLM 關係需 dual-signal verification；query-time OOV 不回寫圖；負向條件不得轉成正向 skill |
 | 評估 | NDCG@10、MRR、Hit@1、Hit@10、latency、錯誤擴展率；每個 flag 都有可重現 ablation |
 
 `use_llm_relations=false` 為 MVP 預設；只有 Step 5C 的品質閘門與 Step 9 ablation 證明有益時才開啟。這讓團隊可以爭取創意分，但不把第二階段實驗綁成核心依賴。
@@ -376,7 +378,7 @@ MVP 的 Skill / Occupation alias 採圖外版本化 `alias_dictionary.csv`，共
 - [x] 節點 / 邊清單已鎖定
 - [x] Node / edge deterministic ID 或 key 規則已寫死
 - [x] A/B 介面格式已示例
-- [x] cutoff 尚未取得正式依據，已記為 `cutoff_status=unresolved`、暫定時區與 snapshot 限制；禁止全量 train graph
+- [x] 建圖資料範圍已確認為全部職缺、不需切分（來源待補，見 1.1）；`graph_data_scope=all_jobs_no_split`；全量分批策略見 5.1
 - [x] fail 條件已列出
 - [x] LLM 在圖譜建構中的必要角色與 ablation 已定義
 - [x] H1 / H2、四個 feature flags、評估指標與 query-time 不回寫政策已寫入 Innovation Contract
@@ -384,42 +386,41 @@ MVP 的 Skill / Occupation alias 採圖外版本化 `alias_dictionary.csv`，共
 
 ---
 
-### Step 1 — 資料準備（train-only）
+### Step 1 — 資料準備（全量，不切 train/test）
 
 **負責人：** B（結構側）為主；A 複核欄位  
 **輸入：** `dataset/職缺.csv`、職務對照表  
 **輸出：**
 
-- `train_jobs`（parquet/csv）
-- 切分報告：筆數、時間範圍、是否含非 train
+- `jobs`（parquet/csv，全量 1,218,635 筆）
+- 資料剖析報告：筆數、時間範圍、欄位完整度
 
 **工作內容：**
 
 1. 解析 `職缺最後修改時間`
-2. 依主辦正式統一切分取出 train JD；資料包的 2026-06-01～06-07 範圍不可直接當 cutoff
-3. 將 naive timestamp 依已決時區轉為 timezone-aware timestamp
-4. 保留建圖必要欄位並計算 `content_hash`、`source_snapshot_id`、`train_eligible`
+2. 全部職缺皆納入（來源待補，見 1.1）；不再依時間排除任何一筆
+3. 將 naive timestamp 依已決時區轉為 timezone-aware timestamp，供稽核與展示使用
+4. 保留建圖必要欄位並計算 `content_hash`、`source_snapshot_id`
 5. 以完整職務三級 tuple 對齊 Occupation `CodeNo`
-6. 輸出 cutoff 前後筆數、最早/最晚時間與排除原因
+6. 輸出資料剖析摘要：總筆數、最早/最晚時間、欄位缺值統計
 
 **關鍵決策：**
 
 | 決策 | 建議 |
 |------|------|
-| cutoff 以哪個時間欄為準 | 以主辦正式切分規則為準；目前實際資料只提供 `職缺最後修改時間`，不可假設 `posted_at` |
-| cutoff 尚未公布 | 只做固定 job_id 的 smoke / profiling；不得宣稱 train-only 全量圖完成 |
+| 建圖資料範圍 | 全部職缺皆可用（來源待補，見 1.1）；不再需要 cutoff 時間欄位決策 |
 | 時區 | 主辦未指定時暫記假設 `Asia/Taipei`，並在 manifest 明示 |
-| 先全量還是 smoke | 先 1k / 10k smoke，再全量 |
-| jobs scope | 優先「有可用文字內容的 train JD」 |
+| 先全量還是 smoke | 先跑固定 smoke / golden slice 驗證管線，結構化欄位可全量跑，LLM 增強分批擴大（理由：LLM 抽取吞吐與成本，非資料排除） |
+| jobs scope | 優先「有可用文字內容的職缺」；全量皆可納入 |
 
-**風險：** 切分錯誤 = 整張圖可能因洩漏作廢。且目前只有最新 JD 快照、沒有版本歷史；即使排除 `last_modified_at > cutoff`，也要在文件中揭露無法完全重建 cutoff 當時 JD 內容的限制。
+**風險：** 全量可用不代表資料品質一致——舊職缺與剛更新的職缺在欄位完整度、用字習慣上可能差異很大，仍要在 manifest 記錄各時間區段的欄位覆蓋率，避免圖被少數時期的職缺型態主導。且目前只有最新 JD 快照、沒有版本歷史，manifest 需揭露此限制。
 
 ---
 
 ### Step 2 — 技能抽取
 
 **負責人：** A（內容側）  
-**輸入：** `train_jobs`  
+**輸入：** `jobs`（全量）  
 **輸出：** `extractions.jsonl`（符合第 3.4 節契約）
 
 #### 2A. 結構化抽取（先做）
@@ -443,7 +444,7 @@ MVP 的 Skill / Occupation alias 採圖外版本化 `alias_dictionary.csv`，共
 
 LLM 是命題要求的圖譜核心模組，不能只當展示。MVP 可先用規則取得 seed，再由 LLM 負責至少一項必要能力，例如非結構化技能抽取、同義詞候選驗證、技能分類或關係判斷，並預留「關閉 LLM 圖譜步驟」的 ablation。
 
-LLM 輸出除第 3.4 節欄位外，可另輸出 `qualifier`、`failure_tags` 與 `relation_candidates[]`；這些欄位只作 audit / Step 5C 候選來源，不得繞過 canonicalization 與品質閘門直接建邊。`relation_candidates[]` 至少要引用同一份 train JD 內的 `mention_id`，禁止以模型常識補不存在於 evidence 的技能。
+LLM 輸出除第 3.4 節欄位外，可另輸出 `qualifier`、`failure_tags` 與 `relation_candidates[]`；這些欄位只作 audit / Step 5C 候選來源，不得繞過 canonicalization 與品質閘門直接建邊。`relation_candidates[]` 至少要引用同一份 JD 內的 `mention_id`，禁止以模型常識補不存在於 evidence 的技能。
 
 #### 2C. Assertion / extraction challenge set（全量前必過）
 
@@ -538,7 +539,7 @@ LLM verifier 只能在已產生的 canonical candidates 中選擇、要求人工
 ### Step 4 — 語意邊與職類階層組裝
 
 **負責人：** B  
-**輸入：** 正規化後的 mentions + `train_jobs`  
+**輸入：** 正規化後的 mentions + `jobs`（全量）  
 **輸出：** `HAS_SKILL`、`IN_OCCUPATION`、`SUBCATEGORY_OF`、`REQUIRES_CREDENTIAL`（中間表或直接進 edges）
 
 **規則建議：**
@@ -564,7 +565,7 @@ LLM verifier 只能在已產生的 canonical candidates 中選擇、要求人工
 ### Step 5 — 統計邊（共現 / 核心技能）
 
 **負責人：** B；A 協助審核泛用技能黑名單  
-**輸入：** train-only 的 `HAS_SKILL` 歸屬
+**輸入：** 全量職缺語料所得的 `HAS_SKILL` 歸屬（不得混入 query／使用者行為資料）
 **輸出：** `CO_OCCURS_WITH`、`CORE_SKILL`；可選的 verified `SEMANTICALLY_RELATED`
 
 #### Statistical eligibility（共現與核心技能共用）
@@ -596,7 +597,7 @@ statistical_eligible =
 
 #### 5A. Skill–Skill 共現
 
-對每個 train Job 的 skill set 做 pair count，再算：
+對每個 Job 的 skill set 做 pair count，再算：
 
 - `count`, `support`
 - `PMI`, `NPMI`
@@ -621,7 +622,7 @@ statistical_eligible =
 在每個 scope 內計算 skill 出現率：
 
 ```text
-core_skill_rate = (# train jobs in occ with skill) / (# train jobs in occ)
+core_skill_rate = (# jobs in occ with skill) / (# jobs in occ)
 ```
 
 以 `Occupation → Skill` 儲存，並同時保留 `occupation_level`、`aggregation_scope`、`job_count`、`skill_job_count`、`required_rate`、`train_window`；只有比例而沒有分母會讓小樣本職類產生誤導性的 1.0。
@@ -633,7 +634,7 @@ core_skill_rate = (# train jobs in occ with skill) / (# train jobs in occ)
 目標是在 Skill Graph 內表達「互補、先備、替代」而不讓 LLM 自由幻想關係。流程固定為：
 
 ```text
-train-only eligible skill pairs
+eligible skill pairs（僅來自職缺語料統計，不含 query／行為資料）
   → deterministic candidates（共現 / 同職類核心技能 / 已有 evidence）
   → LLM label：complements / prerequisite / alternative / unrelated
   → dual-signal verifier（corpus support + evidence grounding + protected-pair policy）
@@ -642,7 +643,7 @@ train-only eligible skill pairs
 
 安全限制：
 
-1. 候選兩端必須已是 accepted Skill，且候選來源只能是 train-only 統計或 train JD evidence。
+1. 候選兩端必須已是 accepted Skill，且候選來源只能是職缺語料統計或職缺 JD evidence，不得引用 query／使用者行為資料。
 2. LLM 必須輸出 relation type、方向、evidence refs 與理由；模型自評分數不等於 verification。
 3. 只有 LLM 判斷與 corpus support 同時通過的關係可標為 `verified`；一般常識但資料無支持者不入圖。
 4. `prerequisite` 須有方向證據；證據不足時降級為 `complements` 候選或 quarantine，不可猜方向。
@@ -690,13 +691,13 @@ graph/
 
 - schema / extraction / dictionary 版本
 - confidence policy、method thresholds 與 statistical eligibility policy 版本
-- `cutoff_status`, `train_cutoff`, cutoff 邊界、時區與正式依據
+- `graph_data_scope=all_jobs_no_split` 與其來源依據（工作坊 Q&A / email 連結，待補）
 - `source_snapshot_id` 與 snapshot 限制
-- train 時間區間、納入 / 排除筆數及原因
+- 職缺總筆數、時間範圍、各時期欄位覆蓋率
 - node / edge 計數（依 type）
 - `occupation_collision_overrides`、semantic relation verifier 與四個 feature flags 的版本 / 啟用狀態
 - 每個輸入檔的 hash、檔名版本與相關比賽文件版本
-- `contains_post_cutoff_jd` 的實測結果；只有驗證為 `false` 才可宣稱 train-only
+- `contains_query_test_leakage` 的實測結果；只有驗證為 `false` 才可宣稱統計邊未使用 query test 資料
 - `model_registry_version`，以及 LLM / embedding model、prompt、inference config、fallback 與 random seed（若適用）
 
 儲存策略（Hackathon）：
@@ -714,9 +715,9 @@ graph/
 
 | 檢查項 | 建議處置 |
 |--------|----------|
-| test JD 出現在圖中 | **fail** |
-| cutoff 未決卻宣稱 train-only 全量圖完成 | **fail** |
-| manifest 缺 cutoff 邊界、時區、snapshot 或輸入 hash | **fail** |
+| query test 期查詢／行為資料流入圖節點、邊或統計量 | **fail** |
+| 建圖資料範圍決策（全量）缺可查證來源 | **warn**；提交前須補齊，否則視為高風險未決事項 |
+| manifest 缺 snapshot、時區或輸入 hash | **fail** |
 | dangling edge | **fail** |
 | duplicate node/edge ID | **fail** |
 | normalized key collision 未處理 | **fail** |
@@ -732,7 +733,7 @@ graph/
 | `CO_OCCURS_WITH` self-loop、NaN / inf 或重複 pair | **fail** |
 | CO_OCCURS / CORE_SKILL 使用不同或未記錄的 statistical eligibility policy | **fail** |
 | `global_job_frequency` 未補齊或使用不同 statistical eligibility policy | **fail** |
-| 未驗證、無 train evidence 或由 test query 觸發的 `SEMANTICALLY_RELATED` 入圖 | **fail** |
+| 未驗證、無職缺語料 evidence 或由 test query 觸發的 `SEMANTICALLY_RELATED` 入圖 | **fail** |
 | test query / OOV 解析回寫圖、alias 或 registry | **fail** |
 | orphan Skill | warn |
 | supernode 超標 | warn + 強制截斷後重跑 |
@@ -798,7 +799,7 @@ query: "node.js 後端"
 → ranked jobs: [57745782, 75669246, ...]
 ```
 
-上例中的 alias normalization 是圖外前處理，因此不畫 `ALIAS_OF`。`HAS_SKILL` / `IN_OCCUPATION` 的 schema 方向是 Job → Skill / Occupation；從 query 節點找 Job 時以 `<-` 明確表示反向 traversal。實際交付 trace 必須使用通過 train cutoff 的 Job，填入真實 edge properties、policy / flag 與截斷資訊，不可保留 `...`。若使用 `SEMANTICALLY_RELATED`，trace 還須顯示 `relation_type`、corpus support 與 evidence refs。
+上例中的 alias normalization 是圖外前處理，因此不畫 `ALIAS_OF`。`HAS_SKILL` / `IN_OCCUPATION` 的 schema 方向是 Job → Skill / Occupation；從 query 節點找 Job 時以 `<-` 明確表示反向 traversal。實際交付 trace 必須使用真實存在於圖中的 Job，填入真實 edge properties、policy / flag 與截斷資訊，不可保留 `...`。若使用 `SEMANTICALLY_RELATED`，trace 還須顯示 `relation_type`、corpus support 與 evidence refs。
 
 ---
 
@@ -841,7 +842,7 @@ query: "node.js 後端"
 | 2 | MVP edge | 多 edge type / 單一屬性邊 | `HAS_SKILL` + `IN_OCCUPATION` + `SUBCATEGORY_OF` + `REQUIRES_CREDENTIAL` | v0.1 已決 |
 | 3 | Alias 實作 | 字典 / Alias 節點 | 版本化字典；Skill / Occupation 共用 schema，query normalization 在圖外 | v0.1 已決 |
 | 4 | ID 規則 | 顯示名 / registry / hash | Job 用原 ID、Occupation 用 CodeNo、Skill/Credential 用 registry key | v0.1 已決 |
-| 5 | train cutoff | 日期時間、邊界、時區、依據 | 跟主辦正式切分；目前 `unresolved` 且禁止全量建圖 | v0.1 政策已決 |
+| 5 | 建圖資料範圍 | train-only 切分 / 全量 | 全部職缺皆可用，不需切分（來源待補，見 1.1） | v0.1 政策已決 |
 | 6 | Confidence 用途 | ranking / quarantine / 兩者 | extraction accept/quarantine；不直接進 ranking；threshold by method | v0.1 已決 |
 | 7 | Edge confidence 聚合 | max / mean / 機率合併 | accepted mentions 取 `max`，支持數另存 `evidence_count` | v0.1 已決 |
 | 8 | 抽取策略 | 規則優先 / LLM 優先 / 混合 | 規則 seed + LLM 必要抽取/驗證/分類 + ablation | v0.1 已決 |
@@ -852,12 +853,12 @@ query: "node.js 後端"
 | 13 | 共現門檻 | count / NPMI / top-N | count≥5, NPMI≥0.1, top-N 待 smoke 校準 | v0.1 起始值已決 |
 | 14 | 泛用技能 | 進圖 / 降權 / 排除 | 保留但依 DF/IDF 與職類 salience 降權 | v0.1 已決 |
 | 15 | 圖儲存 | CSV / Parquet / NetworkX / Neptune | CSV/Parquet + typed adjacency；避免全量 NetworkX | v0.1 已決 |
-| 16 | fail 條件 | 見 Step 7 | 洩漏、未決 cutoff 誤宣稱、dangling、collision 必 fail | v0.1 已決 |
+| 16 | fail 條件 | 見 Step 7 | query test 資料洩漏、dangling、collision 必 fail | v0.1 已決 |
 | 17 | schema 變更權 | 單人 / 雙人同意 | **雙人同意** | v0.1 已決 |
 | 18 | Occupation 未知碰撞 | 自動選子層 / quarantine | 只接受版本化 override；未知碰撞 quarantine 並阻擋全量 Gate | v0.1 已決 |
 | 19 | Assertion gate | 全部 affirmed / challenge set | 負向 golden challenge set 必過；未過的非結構化來源 quarantine | v0.1 已決 |
 | 20 | 創意主軸 | 多加邊 / evidence-calibrated + adaptive | 可量測的 H1/H2；所有能力以 feature flag 控制 | v0.1 已決 |
-| 21 | LLM relation | 直接入圖 / dual-signal verified | train corpus + evidence + verifier 同時通過；預設關閉 | v0.1 已決 |
+| 21 | LLM relation | 直接入圖 / dual-signal verified | 職缺語料 + evidence + verifier 同時通過；預設關閉 | v0.1 已決 |
 | 22 | OOV query | 寫回圖 / query-time mapping | 只暫時映射既有 Skill；不回寫任何圖資產 | v0.1 已決 |
 
 ---
@@ -870,10 +871,10 @@ query: "node.js 後端"
 
 開工條件：
 
-1. Gate 0 的 Schema、cutoff 狀態、抽取 JSON、quality policy 與 Innovation Contract 已鎖定。
-2. 兩人共同挑同一批 100–1,000 個固定 train / smoke Job，完整走過 Step 1–4。
+1. Gate 0 的 Schema、建圖資料範圍（全量、不切 train/test）、抽取 JSON、quality policy 與 Innovation Contract 已鎖定。
+2. 兩人共同挑同一批 100–1,000 個固定 smoke Job，完整走過 Step 1–4。
 3. A 的 JSONL 能被 B 的 assembler 無人工修改讀入，且產生的邊可回指 mention / evidence。
-4. 若 cutoff 未決，只能在固定 smoke IDs 並行；不可各自建立或宣稱全量 train graph。
+4. 全量資料雖已可用，仍先在固定 smoke IDs 並行驗證管線；LLM 抽取受吞吐與成本限制，不可宣稱「一次全量」已完成，須分批擴大並記錄進度。
 
 ### 7.2 角色定義與工作包
 
@@ -887,10 +888,10 @@ query: "node.js 後端"
 | 工作包 | Owner | 輸入 | 完成輸出 | 何時需同步 |
 |--------|-------|------|----------|------------|
 | A0 模型比較與 freeze | A 主、B review latency / interface | golden set、model I/O contract | `model_registry.yaml`、品質 / 成本 / latency 比較 | Gate 1 review；Gate 2 freeze chosen / fallback model |
-| A1 結構化 / phrase / LLM 抽取 | A | 固定 smoke `train_jobs`，之後為全量 train | `extractions.jsonl`, `extraction_config.yaml`, model bake-off / failure report | JSON schema、模型或 enum 要改時先停在 Gate |
+| A1 結構化 / phrase / LLM 抽取 | A | 固定 smoke `jobs`，之後分批擴大到全量 | `extractions.jsonl`, `extraction_config.yaml`, model bake-off / failure report | JSON schema、模型或 enum 要改時先停在 Gate |
 | A2 Canonical registry / alias | A 主、B review | extractions、CodeAlike、protected pairs | dictionaries、normalized mentions、audit | 新 ID、合併或 collision policy 需雙人同意 |
-| A3 LLM semantic verifier | A 主 | B 提供的 train-only candidates | `semantic_relation_audit.jsonl` | verifier threshold / relation type 變更需同步 |
-| B1 Train / Occupation substrate | B | 原始 CSV、cutoff、職務對照表 | `train_jobs`, hierarchy, mapping audit, overrides | cutoff 或未知碰撞立刻同步 |
+| A3 LLM semantic verifier | A 主 | B 提供的職缺語料統計 candidates（不含 query 資料） | `semantic_relation_audit.jsonl` | verifier threshold / relation type 變更需同步 |
+| B1 Occupation substrate | B | 原始 CSV、職務對照表 | `jobs`（全量）, hierarchy, mapping audit, overrides | 未知碰撞立刻同步 |
 | B2 Edge assembler / statistics | B | A 的 frozen JSONL + dictionaries | core edges、CO_OCCURS、CORE_SKILL、global DF | A 的契約 hash 改變不得靜默續跑 |
 | B3 Export / quality / retrieval | B | 完整 graph tables | graph package、quality report、trace runner | fail、新 supernode 或 latency 超標時同步 |
 | J1 Golden slice / evaluation | 共同 | 同一固定樣本與 query set | contract test、ablation matrix、3–5 traces | 每個 Gate 一起 sign-off |
@@ -917,17 +918,17 @@ B 主要輸出 ──► graph/nodes + edges + manifest + occupation overrides +
 
 | Gate | 時點 | 兩人共同確認 | 未通過時 |
 |------|------|--------------|----------|
-| Gate 0 — Contract freeze | 開工前 | Schema、JSON、ID、cutoff、quality、H1/H2、feature flags | 不開始獨立全量工作 |
+| Gate 0 — Contract freeze | 開工前 | Schema、JSON、ID、建圖資料範圍（全量）、quality、H1/H2、feature flags | 不開始獨立全量工作 |
 | Gate 1 — Golden ingestion | 100–1,000 Job Step 1–4 後 | A artifact 可被 B 原樣讀入；模型 bake-off；evidence / edge 可追溯；未知 occupation collision 為零 | 修契約、模型候選或 quarantine，不擴至 10k |
 | Gate 2 — Content / model freeze | 10k 抽取 / canonicalize 後 | chosen / fallback model、prompt、challenge set、protected pairs、dictionary diff、quarantine rate | 不啟動全量統計 |
 | Gate 3 — Pre-full graph | Step 5–7 smoke 後 | 無 fail、DF / supernode 合理、semantic relation precision 合格 | 關閉實驗功能或回退 config |
-| Gate 4 — Submission candidate | Step 8–9 | train-only、trace、ablation、指標與 latency 可重現 | 以 G2 / G3 等較穩版本提交，不勉強上 FULL |
+| Gate 4 — Submission candidate | Step 8–9 | 全量建圖來源已附佐證、trace、ablation、指標與 latency 可重現 | 以 G2 / G3 等較穩版本提交，不勉強上 FULL |
 
 ### 7.6 建議時程（可依比賽日程壓縮）
 
 ```text
 Day 0（共同 90 分）— Gate 0
-  權威來源矩陣 + Schema v0.1 + JSON 契約 + cutoff + Innovation Contract + 工作包確認
+  權威來源矩陣 + Schema v0.1 + JSON 契約 + 建圖資料範圍（全量） + Innovation Contract + 工作包確認
 
 Day 1（共同）— Gate 1
   同一批 100–1,000 Job 跑 Step 1–4；先證明 A/B artifact 能直接串接
@@ -940,7 +941,7 @@ Day 4–5（並行）
   A: A3 + LLM failure / relation audit；B: 統計邊 + global DF + export / quality
   smoke graph 合流 → Gate 3
 
-Day 6（cutoff 已決才全量）
+Day 6（全量，依 LLM 吞吐分批跑完）
   B 跑 frozen artifacts；A 抽查 quarantine / relation / failure cases
 
 Day 7（共同）— Gate 4
@@ -962,14 +963,14 @@ Day 7（共同）— Gate 4
 ## 8. 端到端流程圖
 
 ```text
-Gate 0: Schema + JSON + cutoff + Innovation Contract（共同）
+Gate 0: Schema + JSON + 建圖資料範圍（全量） + Innovation Contract（共同）
         │
         ▼
 Gate 1: 同一 golden slice 跑通 Step 1–4（共同）
         │
         ▼
 A 軌: Step 2–3 Content Graph        B 軌: Step 1/4 Structure Graph
-     extraction / assertion             train / occupation / assembler
+     extraction / assertion             全量資料準備 / occupation / assembler
      registry / alias / verifier         hierarchy / overrides / quality
         │                                      │
         └────────── Gate 2: frozen artifacts ─┘
@@ -995,8 +996,8 @@ Gate 4: adaptive traversal + ablation + docs（共同）
 - [x] Core edge types：`HAS_SKILL` / `IN_OCCUPATION` / `SUBCATEGORY_OF` / `REQUIRES_CREDENTIAL`
 - [x] 第二階段 edge：`CO_OCCURS_WITH` / `CORE_SKILL`；`SEMANTICALLY_RELATED` 預設 off
 - [x] Node / edge deterministic key：依第 3.3 節
-- [ ] train cutoff：待主辦正式依據；邊界：待定；時區：暫記 `Asia/Taipei`
-- [x] cutoff 狀態：`unresolved`；只阻擋全量建圖，允許固定 golden slice
+- [x] 建圖資料範圍：已確認全部職缺可用，不需切分；時區：暫記 `Asia/Taipei`
+- [ ] 建圖資料範圍決策來源：______________________________（工作坊 Q&A / email / FAQ，待補後方可視為權威依據）
 - [ ] source snapshot / hash：______________________________
 - [x] 抽取 JSON 版本：`v0.1`
 - [x] confidence 用途：accept/quarantine；直接進 ranking：否
@@ -1031,8 +1032,8 @@ Gate 4: adaptive traversal + ablation + docs（共同）
 
 ## 10. 常見陷阱
 
-1. **用 test JD 建圖** → 洩漏，可能整項不計分  
-2. **把資料包 6/1～6/7 當成 train window** → 主辦尚未公布 cutoff，不得自行推定
+1. **用 query test 期查詢／行為資料建圖或做統計邊** → 洩漏，可能整項不計分（職缺 JD 本身已確認全量可用，不在此列）
+2. **口頭確認覆蓋書面命題文件卻不留紀錄** → 「圖譜可用全量職缺」已向主辦方確認，但命題文件對 train-only 有明文罰則；來源未補齊前只能算高風險未決事項，不得逕自宣稱已完全解除限制
 3. **把最後修改時間當成刊登時間** → 實際資料沒有 `posted_at`
 4. **未先定 schema 就分頭寫** → 合併成本爆炸
 5. **alias 過度合併或移除語意標點** → Java / JavaScript、C / C++、Node / Node.js 被誤合併
@@ -1048,10 +1049,10 @@ Gate 4: adaptive traversal + ablation + docs（共同）
 15. **把瀏覽/應徵直接當 graph 邊** → 行為訊號應留給排序模組，避免把曝光偏差寫進圖結構
 16. **只過濾 `canonicalization_status`、忘記同時過濾 `assertion_status`** → 「不需要 Python 經驗」這類否定語氣被物化成正向 `HAS_SKILL`，使用者搜尋會撈到明講不需要該技能的職缺
 17. **職務三級 tuple 多重匹配只補救單一案例** → 已知案例需收斂到版本化 override；新碰撞不得沿用猜測規則，應 quarantine 後審核
-18. **`train_eligible` 誤植為最終圖節點的必要屬性** → 非 train 職缺若連同旗標寫進 `graph/nodes.csv`，即使標示為 `false` 仍算「test JD 出現在圖中」
+18. **`train_eligible` 誤植為最終圖節點的必要屬性** → 建圖資料範圍已改為全量，此欄位現恆為 `true`，僅供稽核回溯；不要再用它做任何排除 Job 的判斷邏輯
 19. **未知 Occupation collision 自動選最細層** → 可能穩定地產生錯誤 `IN_OCCUPATION`；只接受已審核 override
 20. **所有非結構化 mention 預設 `affirmed`** → assertion gate 名義存在、實際失效；負向 challenge set 未過不得全量入圖
-21. **LLM 憑常識自由補 semantic edge** → 關係無 train evidence、難以答辯且可能誤擴展；只接受 dual-signal verified edge
+21. **LLM 憑常識自由補 semantic edge** → 關係無職缺語料 evidence、難以答辯且可能誤擴展；只接受 dual-signal verified edge
 22. **OOV query 寫回 registry / graph** → test-time leakage 與圖版本漂移；只做 ephemeral mapping
 23. **為每個 query 固定擴展全部鄰居** → supernode、latency 與誤連放大；使用 intent policy 與 top-N / threshold
 24. **為了完整創意方案忽略 ablation 退步** → 若 G4 / FULL 不如 G2 / G3，正式提交應關閉該功能
@@ -1088,17 +1089,17 @@ API 層不需要知道圖內部細節；只要最終能對 `query` / `location_c
 
 | 問題 | 答案 |
 |------|------|
-| Schema 狀態？ | **v0.1 已凍結；Gate 0=`conditional_pass`，可做 golden slice，正式 cutoff 未決前不可全量建圖** |
-| 主要用什麼資料？ | 主辦正式 train 期 `職缺.csv` + `職務對照表`；資料包週期不等於 train cutoff |
-| 步驟？ | Schema → train 資料 → 抽取 → 正規化 → 組邊 → 統計邊 → 匯出 → 品質 → smoke → 文件 |
+| Schema 狀態？ | **v0.1 已凍結；Gate 0=`conditional_pass`；建圖資料範圍已確認為全量、不需切分（來源待補）** |
+| 主要用什麼資料？ | 全部 `職缺.csv`（1,218,635 筆）+ `職務對照表`；query／行為資料仍依 `dataset_1111.py` 切 train/validation/test |
+| 步驟？ | Schema → 全量職缺 → 抽取 → 正規化 → 組邊 → 統計邊 → 匯出 → 品質 → smoke → 文件 |
 | Schema 核心？ | Job / Skill / Occupation / Credential；HAS_SKILL / IN_OCCUPATION / SUBCATEGORY_OF / REQUIRES_CREDENTIAL |
-| 創意主軸？ | Evidence-Calibrated, Query-Adaptive Skill Graph；LLM 關係需 train evidence + verifier，查詢採最小必要 traversal |
+| 創意主軸？ | Evidence-Calibrated, Query-Adaptive Skill Graph；LLM 關係需職缺語料 evidence + verifier，查詢採最小必要 traversal |
 | 模型何時決定？ | Gate 0 鎖 I/O 與評估契約；Gate 1 做 1k bake-off；Gate 2 freeze extraction / verifier / embedding 的 chosen 與 fallback model |
 | Confidence 怎麼用？ | 只做 extraction accept/quarantine，門檻依 method 版本化；v0.1 不直接進 ranking |
 | 統計邊吃哪些技能？ | 共用 `statistical_eligible`：affirmed + accepted + 達門檻，並依 requirement / source 篩選 |
 | Occupation 怎麼聚合？ | minor 用 direct jobs；middle / major 使用 direct + descendant jobs 去重 |
 | 怎麼分工？ | 先共同跑 golden slice；A 做 Content Graph，B 做 Structure Graph；在 Gate 0–4 交換 frozen artifact / hash 並共同 sign-off |
-| 何時算建圖完成？ | cutoff 已決 + 品質閘門通過 + query policy 有可解釋 trace + feature-flag ablation 可重現；實驗功能退步就關閉 |
+| 何時算建圖完成？ | 建圖資料範圍決策已附佐證 + 品質閘門通過 + query policy 有可解釋 trace + feature-flag ablation 可重現；實驗功能退步就關閉 |
 
 ---
 
@@ -1107,7 +1108,7 @@ API 層不需要知道圖內部細節；只要最終能對 `query` / `location_c
 若只能做一條最短路徑：
 
 1. Day 0 鎖定 Job / Skill / Occupation / Credential + HAS_SKILL / IN_OCCUPATION / SUBCATEGORY_OF / REQUIRES_CREDENTIAL
-2. cutoff 未決只做固定 job_id smoke；cutoff 已決才建全量 train graph
+2. 先做固定 job_id smoke 驗證管線；建圖資料範圍已確認全量可用，之後依 LLM 抽取吞吐分批擴大到全量，不需等待任何 cutoff
 3. 先抽取三個結構化能力欄，證照獨立路由
 4. 鎖定 method-specific confidence thresholds 與共用 `statistical_eligible` policy
 5. 用 LLM 驗證同義詞或補抽非結構化技能，保留 prompt/version/evidence 與失敗案例
