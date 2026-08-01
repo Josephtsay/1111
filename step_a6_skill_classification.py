@@ -66,18 +66,26 @@ FIXTURES_DIR = ROOT / "fixtures"
 SKILL_DICT = GRAPH_DIR / "skill_dictionary.csv"
 DICT_BACKUP = GRAPH_DIR / "skill_dictionary_pre_classification.csv"
 A5_AUDIT = GRAPH_DIR / "soft_skill_blacklist_audit_v0.2.csv"
-PROMPT_PATH = ROOT / "prompts" / "llm_skill_classification_v0.1.txt"
+PROMPT_PATH = ROOT / "prompts" / "llm_skill_classification_v0.2.txt"
 AUDIT_OUT = GRAPH_DIR / "skill_classification_audit.csv"
 MANIFEST_OUT = GRAPH_DIR / "skill_classification_manifest.json"
 BLACKLIST_V3 = FIXTURES_DIR / "soft_skill_blacklist_v0.3.csv"
 EVAL_SET = FIXTURES_DIR / "skill_kind_eval_set_v0.1.csv"
 
-PROMPT_VERSION = "llm_skill_classification_v0.1"
-CLASSIFICATION_VERSION = "skill_kind_v0.1"
+PROMPT_VERSION = "llm_skill_classification_v0.2"
+CLASSIFICATION_VERSION = "skill_kind_v0.2"
 BLACKLIST_VERSION = "v0.3"
 POLICY_VERSION = "soft_skill_blacklist_policy_v0.3"
 
+# 分類法決策（2026-08-01 人工定案）：不設獨立的 task 類別。
+# 理由：「任務 vs 技能」邊界模糊——雇主把「櫃檯收銀服務」填在工作技能欄，
+# 就是在要求求職者會做這件事，對他而言那就是技能。多一類的收益不足以
+# 抵銷 sign-off 與全量重跑的成本。工作內容型敘述一律歸 technical。
+# v0.2 prompt 因此明確規定：低門檻工作內容 → technical，不是 soft。
 VALID_KINDS = {"technical", "tool", "soft", "non_skill"}
+
+# 只有這些 kind 會成為黑名單候選（仍須通過統計守衛）
+BLACKLISTABLE_KINDS = {"soft", "non_skill"}
 BATCH_SIZE = 40
 
 # ── 統計守衛（沿用 A5 v0.2 門檻，維持同一口徑）──────────────────────────────
@@ -413,7 +421,7 @@ def main() -> int:
         new_kind = got["skill_kind"] if got else row.get("skill_kind", "technical")
         decision, guard_reason = "not_blocked", ""
 
-        if got and got["skill_kind"] in ("soft", "non_skill"):
+        if got and got["skill_kind"] in BLACKLISTABLE_KINDS:
             ok, guard_reason = statistical_guard(cid, stats)
             decision = "blocked" if ok else "candidate_needs_review"
             if ok:
@@ -432,7 +440,7 @@ def main() -> int:
                 })
 
         rule_code = st.get("rule_lexical_code", "")
-        llm_says_soft = new_kind in ("soft", "non_skill")
+        llm_says_soft = new_kind in BLACKLISTABLE_KINDS
         audit_rows.append({
             "registry_key": key,
             "canonical_name": row.get("canonical_name", key),

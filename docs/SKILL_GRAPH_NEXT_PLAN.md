@@ -89,6 +89,29 @@ dataset/職缺.csv + 職務對照表.csv
 | P1.5 | commit + push、通知 B | **A** | 遠端可見 |
 | P1.6 | `use_llm_classification` 進 step6／step8 manifest 且可切換 | **B**（A 提規格） | true/false 兩份 manifest |
 
+### 分類法定案（2026-08-01 人工裁定，已凍結）
+
+`skill_kind` 只有四個值：`technical` / `tool` / `soft` / `non_skill`。
+
+**明確不設 `task` 類別。** 曾考慮過，因為 LLM 用初版 prompt 時把
+「電話接聽與人員接待」（DF 14,456）、「維護辦公室環境清潔」、「達成產能與出貨目標」
+判成 `soft`，差一步就把真實工作內容從統計邊移除。但「任務 vs 技能」邊界本身模糊——
+雇主把「櫃檯收銀服務」填進 `工作技能` 欄，對他而言那就是求職者要會的能力。
+多一類的收益不足以抵銷 sign-off 與全量重跑成本。
+
+**改為在 prompt 寫死判準**（`prompts/llm_skill_classification_v0.2.txt`）：
+工作內容型敘述一律 `technical`；名稱含「溝通／表達／協調／服務」不代表 `soft`；
+只有完全沒有專業或工作內容指向的純特質才是 `soft`；不確定一律給 `technical`。
+
+**資料背景（交付文件需揭露）**：`工作技能` 衍生的 1,032 個 Skill 節點中，
+僅 14.1% 的名稱帶「能力／技巧／知識」標記，37.4%（DF 佔 52.1%）是純動作職責描述。
+節點集合本質上混合了「具名工具」「可遷移能力」「職務工作內容」三種性質；
+這來自來源欄位本身的分類法，不是抽取錯誤。我們用 `skill_kind` 誠實標記，
+不新增節點型別（`Task` 節點列為 schema v0.2 候選，本階段不做）。
+
+已知殘留：16 筆未取得模型回覆，保留 step3 預設 `technical`（`skill_kind_source=step3_default`）；
+2 筆仍帶 `skill_kind_v0.1` 標記。三者皆非 `soft`，不影響黑名單。
+
 ### 分類合規邊界（已寫進 manifest）
 
 1. LLM 只能對**已存在 registry 的技能**指定 kind；不得新增／改寫／刪除 `registry_key`（腳本擋掉不在 batch 內的 key）。
