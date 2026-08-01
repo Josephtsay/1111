@@ -68,6 +68,11 @@ SHORT_KEY_ALLOWLIST = frozenset({
 
 _CJK_RE = re.compile(r"^[\u4e00-\u9fff]{2}$")
 
+# Leading "." defaults to rejected (offset/parse garbage). These are the
+# known-legitimate terms where a leading "." is semantically required:
+# Playbook explicitly requires preserving ".NET" as meaningful punctuation.
+DOT_PREFIX_ALLOWLIST = frozenset({".net", ".net_core"})
+
 # Protected pairs — 不可合併（Playbook §Step 3）
 # 注意：Node / Node.js、K8s / Kubernetes 是縮寫 alias，不是 protected pair
 PROTECTED_GROUPS: list[frozenset[str]] = [
@@ -101,12 +106,38 @@ def normalize_text(text: str) -> str:
     return value.casefold()
 
 
+def sanitize_registry_key(key: str) -> str:
+    """
+    Repair keys where a parenthetical alias/abbreviation survives
+    boundary-only stripping.
+
+    `str.strip("()")` only removes characters sitting at the two string
+    *ends*. A raw value like 'Kubernetes(K8S)' loses its trailing ')' but
+    keeps the interior '(' → 'kubernetes(k8s'. That garbage key was being
+    seeded straight into skill_dictionary.csv (e.g. skill:kubernetes(k8s,
+    skill:amazon_web_services_(aws, skill:docker(docker_compose).
+
+    Join with '_' instead of truncating at '(': truncation would silently
+    collide distinct skills that share a prefix before the paren — e.g.
+    'EDA(Exploratory Data Analysis)' and 'EDA(Electronic Design
+    Automation)' must stay distinct, not both collapse to 'eda'. Joining
+    keeps every key deterministic and collision-safe; deliberate merges
+    still have to go through the alias dictionary, per §Step 3's
+    precision-first / two-person-review policy.
+    """
+    if "(" not in key and ")" not in key:
+        return key
+    value = key.replace("(", "_").replace(")", "")
+    value = re.sub(r"_+", "_", value)
+    return value.strip("_")
+
+
 def normalize_key(text: str) -> str:
     """Produce registry_key：空白→底線，剝外層括號/引號。"""
     value = normalize_text(text)
     value = value.strip("\"'「」『』【】《》()")
     value = re.sub(r"\s+", "_", value.strip())
-    return value or ""
+    return sanitize_registry_key(value) or ""
 
 
 def parse_canonical_candidate(candidate: str) -> tuple[str, str] | None:
@@ -114,10 +145,10 @@ def parse_canonical_candidate(candidate: str) -> tuple[str, str] | None:
     if not candidate:
         return None
     if candidate.startswith("skill:"):
-        key = candidate[len("skill:"):]
+        key = sanitize_registry_key(candidate[len("skill:"):])
         return ("skill", key) if key else None
     if candidate.startswith("credential:"):
-        key = candidate[len("credential:"):]
+        key = sanitize_registry_key(candidate[len("credential:"):])
         return ("credential", key) if key else None
     return None
 
@@ -133,8 +164,11 @@ def is_clean_registry_key(key: str) -> bool:
         else:
             return False
     if key[0] in ",#/:;.|\"'`、•-_+=":
-        return False
+        if not (key[0] == "." and key in DOT_PREFIX_ALLOWLIST):
+            return False
     if key[-1] in ",、;:|\"'`":
+        return False
+    if "(" in key or ")" in key:
         return False
     # Only reject short Latin+顿号 fragments (e.g. "jav、"); keep real compounds
     # like "edm、banner設計與製作" (structured 工作技能).
@@ -298,7 +332,11 @@ class CanonicalRegistry:
         bound = 0
         for raw_alias, language, targets in load_alias_seed_specs():
             alias_key = normalize_key(raw_alias)
-            target = next((t for t in targets if t in self.skills), None)
+            # fixtures/skill_alias_seed_v0.1.csv still lists raw, pre-fix
+            # target forms (e.g. "kubernetes(k8s"); sanitize before matching
+            # so they resolve against the now-clean registry keys.
+            sanitized_targets = [sanitize_registry_key(t) for t in targets]
+            target = next((t for t in sanitized_targets if t in self.skills), None)
             if target is None:
                 continue
             if alias_key == target:
