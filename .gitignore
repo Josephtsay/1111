@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local datasets (large CSVs; keep out of git)
+dataset/
+datasets/
+data/raw/
+
+# Competition / reference PDFs
+*.pdf
+
+# graphify generated knowledge graph artifacts
+graphify-out/
+.graphify/
+
+# Pipeline / model outputs (regenerate locally)
+outputs/
+artifacts/
+graph/
+*.parquet
+*.sqlite
+*.db
+*.pkl
+*.joblib
+*.lgb
+lambdamart_*.txt
+*.booster
+extractions.jsonl
+structured_extractions.jsonl
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+credentials.json
+*.pem
+*.key
+
+# Logs / temp
+*.log
+tmp/
+temp/
+.cache/
