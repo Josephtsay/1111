@@ -4,11 +4,12 @@
     {
       "name": "Schema v0.1 freeze guard",
       "trigger": "PreToolUse",
-      "description": "Guards Schema v0.1 freeze — any write that could alter node/edge types, ID rules, or quality policy requires explicit user confirmation first.",
-      "matcher": "fs_write|str_replace",
+      "description": "Asks for confirmation only when writing to files that define node/edge types, ID rules, or quality policy. Silent for docs and analysis scripts.",
+      "matcher": "fs_write|str_replace|fs_append",
       "action": {
-        "type": "agent",
-        "prompt": "Before this file write, check whether it would:\n- Add or remove a node type (Job/Skill/Occupation/Credential) or edge type\n- Change deterministic ID rules (job:<id>, skill:<key>, occ:<CodeNo>, credential:<key>)\n- Alter confidence policy, assertion_status handling, or requirement_level enum values\n- Modify the extraction JSONL contract (§3.4)\n- Change statistical_eligible policy\n\nIf ANY of the above: STOP, do NOT proceed, and ask the user for two-person approval.\nIf none of the above: proceed normally."
+        "type": "command",
+        "command": "python3 .kiro/hooks/scripts/schema_guard.py",
+        "timeout": 20
       }
     }
   ]

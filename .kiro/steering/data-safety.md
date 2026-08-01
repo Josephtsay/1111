@@ -6,8 +6,9 @@ inclusion: auto
 
 ## 資料安全
 
-- 不得把 `graph/`、`*.parquet`、大型 CSV、`data/raw/` 加入 git（已在 .gitignore）
-- 不得在 chat 中 echo `data/raw/` 原始資料超過 5 行 sample
+- 不得把 `graph/`、`*.parquet`、大型 CSV、`dataset/` 加入 git（已在 .gitignore）
+- 不得在 chat 中 echo `dataset/` 原始資料超過 5 行 sample
+- 原始資料實際位於 **`dataset/`**（`data/raw/` 不存在，勿再引用）
 - 不得捏造資料、統計數字或假設未取得的資訊；若不確定，停下來詢問
 - 不得擅自決定需要雙人同意的事項（模型選擇、品質門檻、Schema 變更）
 - 不得在非結構化 mention 全部預設 `affirmed`——assertion gate 必須如實運作
@@ -27,7 +28,7 @@ inclusion: auto
 
 | 用途 | 路徑 |
 |------|------|
-| 原始資料 | `data/raw/` |
+| 原始資料（不進 git） | `dataset/` |
 | Graph 產出（不進 git） | `graph/` |
 | Pipeline 腳本 | 根目錄 `step*.py` |
 | 團隊文件 | `docs/` |

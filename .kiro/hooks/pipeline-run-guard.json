@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Full-corpus pipeline run guard",
+      "trigger": "PreToolUse",
+      "description": "Warns about foreground execution, Step 3 downstream invalidation, and live LLM cost when a full-corpus step script is invoked. Silent otherwise.",
+      "matcher": "execute_bash",
+      "action": {
+        "type": "command",
+        "command": "python3 .kiro/hooks/scripts/pipeline_guard.py",
+        "timeout": 20
+      }
+    }
+  ]
+}
