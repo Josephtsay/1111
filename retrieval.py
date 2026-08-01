@@ -2,11 +2,20 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import pandas as pd
 
 from .canonicalization import normalize_skill_text
+from .location_mask import (
+    DEFAULT_MIN_CANDIDATES,
+    LocationCodeTable,
+    LocationMask,
+    LocationMaskMode,
+    apply_location_mask,
+    effective_min_candidates,
+    resolve_location_mask,
+)
 from .models import QueryParseResult, TraversalTrace
 
 
@@ -39,6 +48,9 @@ class InMemorySkillGraph:
         *,
         max_hops: int = 2,
         hop_decay: float = 0.7,
+        location_mode: LocationMaskMode | str = LocationMaskMode.HARD_WITH_FALLBACK,
+        location_min_candidates: int = DEFAULT_MIN_CANDIDATES,
+        location_table: LocationCodeTable | None = None,
     ) -> None:
         required_nodes = {"node_id", "label"}
         required_edges = {"from_id", "to_id", "label"}
@@ -52,9 +64,28 @@ class InMemorySkillGraph:
         self.edges = edges.copy()
         self.max_hops = max_hops
         self.hop_decay = hop_decay
+        self.location_mode = LocationMaskMode.coerce(location_mode)
+        self.location_min_candidates = max(0, int(location_min_candidates))
+        self.location_table = location_table
         self.node_rows = {
             str(row["node_id"]): row.to_dict() for _, row in nodes.iterrows()
         }
+        # Query-time location lookup only: this reads the existing Job node
+        # property written by GraphBuilder. No Location node, no new edge, no
+        # Schema v0.1 change, no (skill, location) pre-sharding.
+        self.has_location_metadata = "location_code" in set(nodes.columns)
+        self.job_location_by_id: dict[str, str] = {}
+        if self.has_location_metadata:
+            for node_id, row in self.node_rows.items():
+                if row.get("label") != "Job":
+                    continue
+                value = row.get("location_code")
+                blank = value is None or (
+                    not isinstance(value, str) and pd.isna(value)
+                )
+                self.job_location_by_id[self._job_id_for_node(node_id)] = (
+                    "" if blank else str(value).strip()
+                )
         self.skill_name_to_id: dict[str, str] = {}
         self.alias_to_skill: dict[str, str] = {}
         self.occupation_to_id: dict[str, str] = {}
@@ -121,12 +152,47 @@ class InMemorySkillGraph:
             return default
         return max(0.0, float(value))
 
+    def _job_id_for_node(self, job_node: str) -> str:
+        job_row = self.node_rows.get(job_node, {})
+        return str(job_row.get("job_id", job_node.removeprefix("job:")))
+
+    def resolve_location_mask(
+        self,
+        location_codes: Sequence[str] | LocationMask = (),
+        *,
+        location_mask: LocationMask | None = None,
+        parsed: QueryParseResult | None = None,
+    ) -> LocationMask:
+        """Pick the effective allowlist for a retrieval call.
+
+        Precedence: an explicit ``LocationMask`` wins, then request codes, then
+        the pre-existing (previously unused) ``QueryParseResult.location_filter``.
+        """
+
+        if location_mask is not None:
+            return location_mask
+        codes: object = location_codes
+        if not codes and parsed is not None:
+            codes = parsed.location_filter or ()
+        return resolve_location_mask(codes, table=self.location_table)
+
     def retrieve(
         self,
         query: str | QueryParseResult,
         *,
         top_k: int = 50,
+        location_codes: Sequence[str] | LocationMask = (),
+        location_mask: LocationMask | None = None,
+        location_mode: LocationMaskMode | str | None = None,
+        location_min_candidates: int | None = None,
     ) -> list[Candidate]:
+        """Traverse the skill graph, then apply the location allowlist.
+
+        The mask is enforced on the candidate pool *before* ``[:top_k]`` so a
+        masked query still returns a full page. Skill expansion paths and edge
+        weights are untouched: location is a filter, never a score.
+        """
+
         parsed = self.parse_query(query) if isinstance(query, str) else query
         anchors: list[tuple[str, str]] = []
         for skill in parsed.canonical_skills:
@@ -167,8 +233,7 @@ class InMemorySkillGraph:
                     * (self.hop_decay ** max(0, hop_count - 1))
                 )
                 job_node = str(edge["from_id"])
-                job_row = self.node_rows.get(job_node, {})
-                job_id = str(job_row.get("job_id", job_node.removeprefix("job:")))
+                job_id = self._job_id_for_node(job_node)
                 scores[job_id] += path_score
                 matched[job_id].add(anchor_name)
                 traces[job_id].append(
@@ -227,8 +292,7 @@ class InMemorySkillGraph:
             ]
             for _, edge in instance_edges.iterrows():
                 job_node = str(edge["from_id"])
-                job_row = self.node_rows.get(job_node, {})
-                job_id = str(job_row.get("job_id", job_node.removeprefix("job:")))
+                job_id = self._job_id_for_node(job_node)
                 score = self._edge_weight(edge, 1.0)
                 scores[job_id] += score
                 traces[job_id].append(
@@ -244,7 +308,28 @@ class InMemorySkillGraph:
                     )
                 )
 
-        ranked = sorted(scores, key=lambda job_id: (-scores[job_id], job_id))[:top_k]
+        mask = self.resolve_location_mask(
+            location_codes, location_mask=location_mask, parsed=parsed
+        )
+        pool = sorted(scores, key=lambda job_id: (-scores[job_id], job_id))
+        if mask.active and self.has_location_metadata:
+            pool = apply_location_mask(
+                pool,
+                lambda job_id: self.job_location_by_id.get(job_id, ""),
+                mask,
+                mode=(
+                    self.location_mode if location_mode is None else location_mode
+                ),
+                # The floor is a quality bar for large pools; it must not exceed
+                # the page the caller asked for.
+                min_candidates=effective_min_candidates(
+                    self.location_min_candidates
+                    if location_min_candidates is None
+                    else location_min_candidates,
+                    top_k,
+                ),
+            ).as_list()
+        ranked = pool[:top_k]
         return [
             Candidate(
                 job_id=job_id,

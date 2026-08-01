@@ -12,6 +12,15 @@ from typing import Iterable, Protocol, Sequence
 import duckdb
 import pandas as pd
 
+from .location_mask import (
+    DEFAULT_MIN_CANDIDATES,
+    LocationCodeTable,
+    LocationMask,
+    LocationMaskMode,
+    effective_min_candidates,
+    resolve_location_mask,
+)
+
 
 @dataclass(frozen=True)
 class ScoredJob:
@@ -199,6 +208,20 @@ def build_sqlite_search_index(
     }
 
 
+_CANDIDATE_STATEMENT = """
+                SELECT
+                    j.job_id,
+                    -bm25(jobs_fts, 0.0, 1.0) AS lexical_score,
+                    j.location_code,
+                    j.occupation_code
+                FROM jobs_fts
+                JOIN jobs j ON j.job_id = jobs_fts.job_id
+                WHERE jobs_fts MATCH ?{location_clause}
+                ORDER BY bm25(jobs_fts, 0.0, 1.0), j.job_id
+                LIMIT ?
+                """
+
+
 class SQLiteFTSSearchBackend:
     def __init__(
         self,
@@ -206,16 +229,58 @@ class SQLiteFTSSearchBackend:
         *,
         location_boost: float = 0.35,
         duty_boost: float = 0.5,
+        location_mode: LocationMaskMode | str = LocationMaskMode.HARD_WITH_FALLBACK,
+        location_min_candidates: int = DEFAULT_MIN_CANDIDATES,
+        location_table: LocationCodeTable | None = None,
     ) -> None:
         self.index_path = Path(index_path)
         if not self.index_path.is_file():
             raise FileNotFoundError(self.index_path)
         self.location_boost = location_boost
         self.duty_boost = duty_boost
+        # Duty stays soft on purpose: hard duty filtering is out of scope here and
+        # is handled as a ranking feature / occupation_candidate instead.
+        self.location_mode = LocationMaskMode.coerce(location_mode)
+        self.location_min_candidates = max(0, int(location_min_candidates))
+        self.location_table = location_table
 
     def _connect(self) -> sqlite3.Connection:
         uri = f"{self.index_path.resolve().as_uri()}?mode=ro"
         return sqlite3.connect(uri, uri=True)
+
+    def resolve_mask(self, location_codes: Sequence[str] | LocationMask) -> LocationMask:
+        return resolve_location_mask(location_codes, table=self.location_table)
+
+    def _candidate_rows(
+        self,
+        connection: sqlite3.Connection,
+        query: str,
+        strict_query: str,
+        *,
+        candidate_limit: int,
+        limit: int,
+        mask: LocationMask,
+        apply_mask: bool,
+    ) -> list[tuple]:
+        """Fetch candidates, narrowing by location inside SQL before LIMIT."""
+
+        clause, codes = (
+            mask.sql_filter("j.location_code") if apply_mask else ("", ())
+        )
+        statement = _CANDIDATE_STATEMENT.format(
+            location_clause=f"\n                    AND {clause}" if clause else ""
+        )
+        rows = connection.execute(
+            statement, (strict_query, *codes, candidate_limit)
+        ).fetchall()
+        if len(rows) < limit:
+            broad_query = _fts_query(query, operator="OR")
+            broad = connection.execute(
+                statement, (broad_query, *codes, candidate_limit)
+            ).fetchall()
+            seen = {str(row[0]) for row in rows}
+            rows.extend(row for row in broad if str(row[0]) not in seen)
+        return rows
 
     def search(
         self,
@@ -224,36 +289,52 @@ class SQLiteFTSSearchBackend:
         location_codes: Sequence[str] = (),
         duty_codes: Sequence[str] = (),
         limit: int = 50,
+        location_mask: LocationMask | None = None,
     ) -> list[ScoredJob]:
         strict_query = _fts_query(query, operator="AND")
         if not strict_query:
             return []
-        location_values = {str(value).strip() for value in location_codes if str(value).strip()}
+        mask = (
+            location_mask
+            if location_mask is not None
+            else self.resolve_mask(location_codes)
+        )
+        # Boost on the expanded allowlist: a raw district code never matches a
+        # city-level job location, so exact-matching the request would be dead
+        # weight. When the mask is inactive this set is empty, matching the
+        # previous behaviour for nationwide / absent location codes.
+        location_values = set(mask.codes)
         duty_values = {str(value).strip() for value in duty_codes if str(value).strip()}
         candidate_limit = max(limit * 5, 100)
-        statement = """
-                SELECT
-                    j.job_id,
-                    -bm25(jobs_fts, 0.0, 1.0) AS lexical_score,
-                    j.location_code,
-                    j.occupation_code
-                FROM jobs_fts
-                JOIN jobs j ON j.job_id = jobs_fts.job_id
-                WHERE jobs_fts MATCH ?
-                ORDER BY bm25(jobs_fts, 0.0, 1.0), j.job_id
-                LIMIT ?
-                """
+        hard_filter = mask.active and self.location_mode.filters
         with self._connect() as connection:
-            rows = connection.execute(
-                statement, (strict_query, candidate_limit)
-            ).fetchall()
-            if len(rows) < limit:
-                broad_query = _fts_query(query, operator="OR")
-                broad = connection.execute(
-                    statement, (broad_query, candidate_limit)
-                ).fetchall()
-                seen = {str(row[0]) for row in rows}
-                rows.extend(row for row in broad if str(row[0]) not in seen)
+            rows = self._candidate_rows(
+                connection,
+                query,
+                strict_query,
+                candidate_limit=candidate_limit,
+                limit=limit,
+                mask=mask,
+                apply_mask=hard_filter,
+            )
+            if (
+                hard_filter
+                and self.location_mode.allows_fallback
+                and len(rows)
+                < effective_min_candidates(self.location_min_candidates, limit)
+            ):
+                # Too thin to fill a page: widen back to nationwide rather than
+                # returning an almost-empty result. Soft boost still ranks
+                # in-region jobs first.
+                rows = self._candidate_rows(
+                    connection,
+                    query,
+                    strict_query,
+                    candidate_limit=candidate_limit,
+                    limit=limit,
+                    mask=mask,
+                    apply_mask=False,
+                )
         scored = []
         for job_id, lexical_score, location_code, occupation_code in rows:
             location_match = float(
@@ -299,6 +380,7 @@ class EmptySearchBackend:
         location_codes: Sequence[str] = (),
         duty_codes: Sequence[str] = (),
         limit: int = 50,
+        location_mask: LocationMask | None = None,
     ) -> list[ScoredJob]:
         return []
 
@@ -326,6 +408,7 @@ class HybridRerankBackend:
         location_codes: Sequence[str] = (),
         duty_codes: Sequence[str] = (),
         limit: int = 50,
+        location_mask: LocationMask | None = None,
     ) -> list[ScoredJob]:
         from .graph_features import (
             ALL_FEATURE_NAMES,
@@ -334,17 +417,27 @@ class HybridRerankBackend:
             weighted_baseline_score,
         )
 
+        # Resolve the district -> city allowlist once and share it, so the
+        # lexical and graph legs narrow against exactly the same code set.
+        mask = (
+            location_mask
+            if location_mask is not None
+            else self.lexical_backend.resolve_mask(location_codes)
+        )
         lexical = self.lexical_backend.search(
             query,
             location_codes=location_codes,
             duty_codes=duty_codes,
             limit=self.candidate_pool,
+            location_mask=mask,
         )
         parsed = self.graph.parse_query(query)
         if duty_codes:
+            # Duty stays soft: occupation_candidate is a ranking signal, not a
+            # hard filter, at this stage.
             parsed.occupation_candidate = str(duty_codes[0])
         graph_candidates = self.graph.retrieve(
-            parsed, top_k=self.candidate_pool
+            parsed, top_k=self.candidate_pool, location_mask=mask
         )
         lexical_by_id = {item.job_id: item for item in lexical}
         graph_by_id = {item.job_id: item for item in graph_candidates}

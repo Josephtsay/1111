@@ -10,6 +10,7 @@ import pandas as pd
 
 from .canonicalization import CanonicalizationPipeline, normalize_skill_text
 from .dataset_1111 import Dataset1111Adapter, Dataset1111Config
+from .location_mask import DEFAULT_MIN_CANDIDATES, LocationMaskMode
 from .embeddings import (
     DeterministicEmbeddingProvider,
     build_neptune_import_plan,
@@ -256,7 +257,15 @@ def command_serve_api(args: argparse.Namespace) -> dict[str, Any]:
 
     from .api import create_app
 
-    backend: object = SQLiteFTSSearchBackend(args.index)
+    location_mode = LocationMaskMode.coerce(getattr(args, "location_mode", None))
+    location_min_candidates = int(
+        getattr(args, "location_min_candidates", DEFAULT_MIN_CANDIDATES)
+    )
+    backend: object = SQLiteFTSSearchBackend(
+        args.index,
+        location_mode=location_mode,
+        location_min_candidates=location_min_candidates,
+    )
     if args.graph:
         graph_dir = Path(args.graph)
         graph = InMemorySkillGraph(
@@ -273,6 +282,8 @@ def command_serve_api(args: argparse.Namespace) -> dict[str, Any]:
                     "source_job_id": "string",
                 },
             ),
+            location_mode=location_mode,
+            location_min_candidates=location_min_candidates,
         )
         ranker = LambdaMARTRanker.load(args.model) if args.model else None
         backend = HybridRerankBackend(backend, graph, ranker=ranker)
@@ -698,6 +709,22 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--result-limit", type=int, default=50)
     serve.add_argument("--graph")
     serve.add_argument("--model")
+    serve.add_argument(
+        "--location-mode",
+        default=LocationMaskMode.HARD_WITH_FALLBACK.value,
+        choices=[mode.value for mode in LocationMaskMode],
+        help=(
+            "How location_code is enforced: hard filters the candidate pool, "
+            "hard_with_fallback widens back when the masked pool is too thin, "
+            "soft/off keep today's boost-only behaviour."
+        ),
+    )
+    serve.add_argument(
+        "--location-min-candidates",
+        type=int,
+        default=DEFAULT_MIN_CANDIDATES,
+        help="Fallback floor for --location-mode hard_with_fallback.",
+    )
     serve.set_defaults(func=command_serve_api)
 
     validate = sub.add_parser("validate-data")
