@@ -342,9 +342,12 @@ def traverse_and_rank(
 ) -> TraversalResult:
     """
     Execute graph traversal for a query. Strategy:
-    - 0-hop: exact skill/occ → jobs
+    - 0-hop: exact skill/occ/credential → jobs
     - 1-hop: top CO_OCCURS_WITH by NPMI → expanded jobs (lower weight)
-    - Occupation: IN_OCCUPATION → jobs + CORE_SKILL for scoring
+    - Occupation: IN_OCCUPATION (+ descendants) → jobs
+    - CORE_SKILL boost: jobs matching occupation's core skills get bonus
+    - Credential path: credential mentions resolved from query → jobs
+    - Multi-skill: jobs matching multiple query skills get intersection bonus
     """
     t0 = time.time()
     resolution = resolve_query(query, index)
@@ -353,6 +356,9 @@ def traverse_and_rank(
     # Score accumulator: job_id → score
     job_scores: dict[str, float] = defaultdict(float)
     job_paths: dict[str, list[str]] = defaultdict(list)
+
+    # Track which skills each job matched (for intersection bonus)
+    job_skill_matches: dict[str, set[str]] = defaultdict(set)
 
     # 0-hop: exact skill matches
     for skill_id in resolution.resolved_skills:
@@ -365,12 +371,36 @@ def traverse_and_rank(
             weight = 1.0 if req == "required" else (0.8 if req == "preferred" else 0.6)
             job_scores[job_id] += weight
             job_paths[job_id].append(f"exact:{skill_id}")
+            job_skill_matches[job_id].add(skill_id)
+
+    # Multi-skill intersection bonus: jobs matching ALL query skills get extra score
+    if len(resolution.resolved_skills) > 1:
+        all_skills_set = set(resolution.resolved_skills)
+        intersection_count = 0
+        for job_id, matched_skills in job_skill_matches.items():
+            if matched_skills >= all_skills_set:
+                job_scores[job_id] += 0.5 * len(all_skills_set)
+                job_paths[job_id].append(f"intersection:{len(all_skills_set)}_skills")
+                intersection_count += 1
+        if intersection_count > 0:
+            result.trace_lines.append(
+                f"→ multi-skill intersection bonus: {intersection_count:,} jobs match all {len(all_skills_set)} skills"
+            )
 
     # 1-hop: expand via CO_OCCURS_WITH (only if exact hits are sparse)
+    # Skip expansion for supernodes (>50K edges) — their co-occurs are too noisy
+    SUPERNODE_THRESHOLD = 50_000
     if resolution.resolved_skills and result.exact_hits < 100:
         for skill_id in resolution.resolved_skills:
+            if len(index.skill_to_jobs.get(skill_id, [])) > SUPERNODE_THRESHOLD:
+                result.trace_lines.append(
+                    f"→ {skill_id}: supernode ({len(index.skill_to_jobs[skill_id]):,} edges), skip expansion"
+                )
+                continue
             co = index.co_occurs.get(skill_id, [])
-            top_co = sorted(co, key=lambda x: -x[1])[:expand_top_n]
+            # Filter out supernodes from expansion targets too
+            co_filtered = [(s, n) for s, n in co if len(index.skill_to_jobs.get(s, [])) <= SUPERNODE_THRESHOLD]
+            top_co = sorted(co_filtered, key=lambda x: -x[1])[:expand_top_n]
             for related_skill, npmi in top_co:
                 if npmi < expand_min_npmi:
                     continue
@@ -384,20 +414,46 @@ def traverse_and_rank(
                     job_scores[job_id] += 0.3 * npmi
                     job_paths[job_id].append(f"expand:{related_skill}(npmi={npmi:.2f})")
 
+    # Credential path: try resolving query tokens as credentials
+    for skill_id in resolution.resolved_skills:
+        # Check if this skill also exists as a credential
+        cred_id = skill_id.replace("skill:", "credential:")
+        cred_jobs = index.credential_to_jobs.get(cred_id, [])
+        if cred_jobs:
+            result.trace_lines.append(
+                f"→ {cred_id} <-[REQUIRES_CREDENTIAL]- {len(cred_jobs):,} jobs"
+            )
+            for job_id in cred_jobs:
+                job_scores[job_id] += 0.4
+                job_paths[job_id].append(f"credential:{cred_id}")
+
+    # Also try direct credential lookup for unresolved terms
+    for term in resolution.unresolved_terms:
+        norm = normalize_query_token(term).replace(" ", "_")
+        cred_id = f"credential:{norm}"
+        cred_jobs = index.credential_to_jobs.get(cred_id, [])
+        if cred_jobs:
+            result.trace_lines.append(
+                f"→ {cred_id} <-[REQUIRES_CREDENTIAL]- {len(cred_jobs):,} jobs (from unresolved term)"
+            )
+            for job_id in cred_jobs:
+                job_scores[job_id] += 0.4
+                job_paths[job_id].append(f"credential:{cred_id}")
+
     # Occupation path (with hierarchy descendant expansion)
+    # Collect CORE_SKILL set for boosting
+    occ_core_skill_set: set[str] = set()
     for occ_id in resolution.resolved_occupations:
         occ_code = occ_id.replace("occ:", "")
 
         # Collect direct jobs + all descendant occupation jobs
         all_occ_codes = [occ_code]
-        # Find descendants via occ_parent (reverse lookup)
         descendants = _get_descendants(occ_code, index)
         all_occ_codes.extend(descendants)
 
         jobs = []
         for code in all_occ_codes:
             jobs.extend(index.occ_to_jobs.get(code, []))
-        # Deduplicate
         jobs = list(set(jobs))
 
         result.occupation_hits += len(jobs)
@@ -413,13 +469,32 @@ def traverse_and_rank(
             job_scores[job_id] += 0.5
             job_paths[job_id].append(f"occupation:{occ_id}")
 
-        # Boost with CORE_SKILL
+        # Collect CORE_SKILL for this occupation (for boost below)
         core = index.core_skills.get(occ_code, [])
         if core:
-            top_core = sorted(core, key=lambda x: -x[1])[:5]
-            core_names = [f"{s}({r:.2f})" for s, r in top_core]
+            top_core = sorted(core, key=lambda x: -x[1])[:10]
+            core_names = [f"{s}({r:.2f})" for s, r in top_core[:5]]
             result.trace_lines.append(
                 f"→ {occ_id} -[CORE_SKILL]-> top: {', '.join(core_names)}"
+            )
+            for skill_id, rate in top_core:
+                occ_core_skill_set.add(skill_id)
+
+    # CORE_SKILL boost: only boost jobs that match BOTH occupation AND a query skill
+    # (avoids O(n*m) scan and avoids rewarding unrelated skills)
+    if resolution.resolved_occupations and resolution.resolved_skills:
+        query_skill_set = set(resolution.resolved_skills)
+        boosted = 0
+        for job_id in list(job_scores.keys()):
+            if any("occupation:" in p for p in job_paths.get(job_id, [])):
+                matched = job_skill_matches.get(job_id, set()) & query_skill_set
+                if matched:
+                    job_scores[job_id] += 0.5 * len(matched)
+                    job_paths[job_id].append(f"occ+skill_boost:{len(matched)}")
+                    boosted += 1
+        if boosted > 0:
+            result.trace_lines.append(
+                f"→ occ+skill intersection boost: {boosted:,} jobs"
             )
 
     # Rank and get top-K
@@ -430,7 +505,7 @@ def traverse_and_rank(
             "job_id": job_id,
             "score": round(score, 3),
             "title": title[:60],
-            "paths": job_paths[job_id][:3],
+            "paths": job_paths[job_id][:4],
         })
 
     result.latency_ms = (time.time() - t0) * 1000

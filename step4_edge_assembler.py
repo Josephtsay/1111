@@ -339,8 +339,8 @@ class EdgeAssembler:
         out.mkdir(parents=True, exist_ok=True)
         paths = {}
 
-        # edges.csv — all edges in one file
-        edges_path = out / "edges.csv"
+        # edges_core.csv — Step 4 edges only (HAS_SKILL, REQUIRES_CREDENTIAL, IN_OCCUPATION, SUBCATEGORY_OF)
+        edges_path = out / "edges_core.csv"
         all_edges = (
             self.has_skill_edges
             + self.requires_credential_edges

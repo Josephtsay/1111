@@ -152,6 +152,25 @@ def build_nodes(graph_dir: Path) -> Path:
                     if parent not in occ_codes:
                         occ_codes[parent] = {"parent_code": ""}
 
+                # Also collect from train_jobs (some leaf codes only appear there)
+                if train_jobs.exists():
+                    job_occ_rows = con.execute(f"""
+                        SELECT DISTINCT occupation_code
+                        FROM read_parquet('{train_jobs.resolve().as_posix()}')
+                        WHERE occupation_code IS NOT NULL AND occupation_code != ''
+                    """).fetchall()
+                    for (code,) in job_occ_rows:
+                        code = str(code)
+                        if code not in occ_codes:
+                            # Derive parent from code pattern
+                            if code[-2:] != "00":
+                                parent = code[:4] + "00"
+                            elif code[-4:] != "0000":
+                                parent = code[:2] + "0000"
+                            else:
+                                parent = ""
+                            occ_codes[code] = {"parent_code": parent}
+
                 # Get names from duties table (via train_jobs or raw)
                 duties_csv = Path(__file__).parent / "data" / "raw" / "職務對照表.csv"
                 if duties_csv.exists():
@@ -197,7 +216,7 @@ def merge_edges(graph_dir: Path) -> Path:
     """
     Merge Step 4 edges + Step 5 statistical edges into final edges.csv.
     """
-    step4_edges = graph_dir / "edges.csv"
+    step4_edges = graph_dir / "edges_core.csv"
     co_occurs = graph_dir / "co_occurs_edges.csv"
     core_skill = graph_dir / "core_skill_edges.csv"
     final_edges = graph_dir / "edges_final.csv"
@@ -258,8 +277,11 @@ def merge_edges(graph_dir: Path) -> Path:
         print(f"      {etype}: {count:,}")
 
     # Replace edges.csv with merged version
-    final_edges.rename(graph_dir / "edges.csv")
-    return graph_dir / "edges.csv"
+    target = graph_dir / "edges.csv"
+    if target.exists():
+        target.unlink()
+    final_edges.rename(target)
+    return target
 
 
 def build_manifest(graph_dir: Path, node_counts: dict, edge_counts: dict) -> Path:
