@@ -537,26 +537,20 @@ def main() -> int:
         if not DICT_BACKUP.exists():
             DICT_BACKUP.write_text(SKILL_DICT.read_text(encoding="utf-8"), encoding="utf-8")
             print(f"  backed up original → {DICT_BACKUP}")
-        out_fields = list(fields)
-        for extra in ("skill_kind_source", "skill_kind_version", "skill_kind_confidence"):
-            if extra not in out_fields:
-                out_fields.append(extra)
+        # 只更新 skill_kind 的值，不新增任何欄位：
+        #   - 分類版本／模型是整批 run 的屬性 → 記在 manifest，不是每列重複
+        #   - 模型自評 confidence 依 playbook §3.4 #4 不得作為通過依據 → 只留在 audit
+        #   - 未分類的例外清單 → manifest 的 unclassified_registry_keys
+        # 如此字典結構與 step3 產出完全一致，step6 讀取零風險。
         with SKILL_DICT.open("w", encoding="utf-8", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=out_fields)
+            w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
             w.writeheader()
             for row in rows:
                 got = classified.get(row["registry_key"])
                 if got:
                     row["skill_kind"] = got["skill_kind"]
-                    row["skill_kind_source"] = f"llm:{args.model}"
-                    row["skill_kind_version"] = CLASSIFICATION_VERSION
-                    row["skill_kind_confidence"] = got["confidence"]
-                else:
-                    row.setdefault("skill_kind_source", "step3_default")
-                    row.setdefault("skill_kind_version", "")
-                    row.setdefault("skill_kind_confidence", "")
                 w.writerow(row)
-        print(f"  updated {SKILL_DICT}（skill_kind；dictionary_version 未動）")
+        print(f"  updated {SKILL_DICT}（只改 skill_kind 值；欄位與 dictionary_version 均未動）")
 
     agree = Counter(r["agreement_with_rule"] for r in audit_rows if r["agreement_with_rule"])
     manifest = {
@@ -589,6 +583,11 @@ def main() -> int:
                 1 for r in audit_rows if r["blacklist_decision"] == "candidate_needs_review"
             ),
             "agreement_with_rule_based": dict(agree),
+            # 例外清單記在這裡，而不是在字典每列加 skill_kind_source 欄
+            "unclassified_registry_keys": sorted(
+                r["registry_key"] for r in targets
+                if r["registry_key"] not in classified
+            ),
             "strict_json_batches": sum(1 for m in call_meta if m.get("strict_json")),
             "total_batches": len(call_meta),
             "batch_errors": [m for m in call_meta if m.get("error")][:10],
