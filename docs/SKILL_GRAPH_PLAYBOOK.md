@@ -82,14 +82,14 @@ Schema 是兩人共用的合約。若未先對齊就分頭實作，常見後果�
 
 | 類型 | 範例 | 必要屬性 | MVP |
 |------|------|----------|-----|
-| `Job` | `job:1370179` | `job_id`, `title`, `last_modified_at`, `source_snapshot_id`, `content_hash`, `train_eligible` | 必做 |
+| `Job` | `job:1370179` | `job_id`, `title`, `last_modified_at`, `source_snapshot_id`, `content_hash` | 必做 |
 | `Skill` | `skill:python` | `skill_id`, `canonical_name`, `skill_kind`, `dictionary_version`, `global_job_frequency` | 必做 |
 | `Occupation` | `occ:140200` | `occupation_code`, `name`, `level`（`major` / `middle` / `minor`）, `parent_code` | 必做 |
 | `Credential` | `credential:高考護理師執照` | `credential_id`, `canonical_name`, `credential_type` | 必做 |
 | `SkillAlias` | `alias:reactjs` | `normalized_alias` | 可選；MVP 預設使用版本化字典，不建節點 |
 | `SkillCategory` | `cat:programming_language` | `name` | 後期 |
 
-資料只有 `職缺最後修改時間`，沒有刊登時間；因此 `posted_at` 不得列為必要欄位。若時程極緊，`Credential` 可暫以 `Skill.skill_kind=credential` 實作，但不可把證照與一般技能無標記混在一起。
+資料只有 `職缺最後修改時間`，沒有刊登時間；因此 `posted_at` 不得列為必要欄位。若時程極緊，`Credential` 可暫以 `Skill.skill_kind=credential` 實作，但不可把證照與一般技能無標記混在一起。`train_eligible` 只存在於 Step 1 的 `train_jobs` 中間表，供切分稽核使用；最終 `graph/nodes.csv` 只收錄 `train_eligible=true` 的 Job，不得把非 train 職缺連同旗標一起寫入最終圖節點，否則視同「test JD 出現在圖中」而觸發 Step 7 fail。`global_job_frequency` 須採用與 Step 5 相同的 `statistical_eligible` policy 計算分子分母，不得與 `CORE_SKILL.rate` 使用不同口徑，避免下游 IDF 降權與核心技能比例對不齊。
 
 ### 3.2 邊（Edges）
 
@@ -394,6 +394,7 @@ LLM 是命題要求的圖譜核心模組，不能只當展示。MVP 可先用規
 - [ ] 每個 mention 都有 `mention_id`、`source_field`、evidence、extractor version
 - [ ] 隨機抽 50 筆人工抽查通過率可接受
 - [ ] LLM 與非 LLM 抽取的差異可被量化
+- [ ] `assertion_status` 是否已實作真實的否定 / 不確定偵測（而非全部預設 `affirmed`）已明確記錄；若未實作，須列為已知限制並在 manifest / 失敗模式說明中揭露
 - [ ] 已知失敗案例與防護有清單（供比賽說明）
 
 ---
@@ -452,17 +453,19 @@ raw_mention
 **規則建議：**
 
 1. 同一 `(job, skill)` 多次出現 → 物化一條 `HAS_SKILL`，聚合後 requirement 採 `required > preferred > unspecified`
-2. 不刪除原始 mentions；只聚合 accepted mentions，邊保留 `evidence_refs`、`evidence_count`、`source_fields`、`max(confidence)` 與 extractor version
+2. 不刪除原始 mentions；只聚合 `assertion_status == affirmed` 且 `canonicalization_status == accepted` 的 mentions（negated / uncertain 一律不得物化成 `HAS_SKILL`），邊保留 `evidence_refs`、`evidence_count`、`source_fields`、`max(confidence)` 與 extractor version
 3. 語意邊不寫死 `.72` / `.45` 等 ranking weight；權重放在 ranking config
 4. Occupation 以 `(職務大類, 職務中類, 職務小類)` 對 `CodeNameC/B/A` exact match，連到最細可解析 `CodeNo`
-5. `美編設計` 雙重匹配採明文化 deterministic 規則（目前建議選較具體的 `230100`），並記 `mapping_status=resolved_ambiguity`
+5. 職務三級 tuple 對到 `CodeNo` 發生雙重匹配時，一律套用「選較具體（子層級）碼」的 deterministic tie-break；4.4 節已知的全部雙重匹配案例（含 `美編設計` → `230100`）須逐筆列入 `occupation_collision_overrides` 對照表，不可只處理已發現的單一案例，日後新掃到的碰撞須補進同一張表，並記 `mapping_status=resolved_ambiguity`
 6. 三級分類全空時不建立 `IN_OCCUPATION`；列 warn，不建立 `occ:unknown` supernode
 7. 依 `CodeNo` 建立小類 → 中類 → 大類的 `SUBCATEGORY_OF`
 
 **完成定義：**
 
 - [ ] 每條 `HAS_SKILL` / `REQUIRES_CREDENTIAL` 都能追溯 evidence
+- [ ] 每條 `HAS_SKILL` 的來源 mentions 皆為 `assertion_status == affirmed`；抽查確認沒有 negated / uncertain mention 被物化
 - [ ] 每條 `IN_OCCUPATION` 都能追溯 tuple → CodeNo 映射結果
+- [ ] 所有已知職務三級 tuple 雙重匹配案例都能在 `occupation_collision_overrides` 找到對應規則
 - [ ] 無指向不存在 Job / Skill / Credential / Occupation 的邊
 
 ---
@@ -598,6 +601,7 @@ graph/
 | `requirement_level` / `assertion_status` 非法值 | **fail** |
 | `confidence` 不在 `[0, 1]` 或 method threshold 未版本化 | **fail** |
 | 低於 threshold / quarantined mention 被物化成 graph edge | **fail** |
+| `assertion_status` 為 negated / uncertain 的 mention 被物化成 `HAS_SKILL` | **fail** |
 | protected pair 被合併 | **fail** 或 quarantine |
 | evidence 不在指定 `source_field` 原文 | quarantine |
 | Occupation 無法匹配 / 多重匹配 | quarantine；套用已決規則後可降為 warn |
@@ -804,6 +808,8 @@ Step 8–9: smoke traversal + docs（A+B）
 - [ ] Credential：獨立節點 / `Skill.skill_kind=credential`
 - [ ] Alias：版本化字典 / graph node；schema/version：________________
 - [ ] CodeAlike delimiter / ambiguity policy 已確認
+- [ ] 職務三級 tuple 雙重匹配 tie-break 規則與 `occupation_collision_overrides` 對照表已建立並涵蓋所有已知案例
+- [ ] `HAS_SKILL` 物化條件已確認同時檢查 `assertion_status == affirmed` 與 `canonicalization_status == accepted`
 - [ ] 合併策略：precision-first / 其他：________
 - [ ] statistical_eligible policy/version：______________________________
 - [ ] Occupation aggregation：minor=direct；middle/major=direct+descendants
@@ -833,6 +839,9 @@ Step 8–9: smoke traversal + docs（A+B）
 13. **建完圖不做 retrieval smoke / ablation** → 圖是死資產，無法證明對排序有用
 14. **A/B 搶改同一份 edges** → 用介面契約隔離
 15. **把瀏覽/應徵直接當 graph 邊** → 行為訊號應留給排序模組，避免把曝光偏差寫進圖結構
+16. **只過濾 `canonicalization_status`、忘記同時過濾 `assertion_status`** → 「不需要 Python 經驗」這類否定語氣被物化成正向 `HAS_SKILL`，使用者搜尋會撈到明講不需要該技能的職缺
+17. **職務三級 tuple 雙重匹配只補救單一發現案例** → 其餘已知碰撞行為未定義；需用涵蓋全部案例的 override 對照表，而非逐一發現逐一補丁
+18. **`train_eligible` 誤植為最終圖節點的必要屬性** → 非 train 職缺若連同旗標寫進 `graph/nodes.csv`，即使標示為 `false` 仍算「test JD 出現在圖中」
 
 ---
 
