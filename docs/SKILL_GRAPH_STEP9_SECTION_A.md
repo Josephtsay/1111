@@ -470,7 +470,7 @@ r2 §2 寫「37.4%（DF 佔 52.1%）是純動作職責描述」。這一組數�
 | 4 | 修正 `SKILL_GRAPH_NEXT_PLAN.md` r2 的 37.4%/52.1%（見 A3.6） | 揭露數字可重現性 |
 | 5 | 若要 Gate 2 freeze 抽取模型：重新分層 golden slice 或建人工 mention 標註，並提高 sonnet 的 `max_tokens` 重測 | `chosen` / `fallback` 目前為 `null` |
 | 6 | 取得帳號 rate card 填入成本 | `avg_cost_usd_per_job` 為 `null` |
-| 7 | **擴充 skill alias（目前僅 37 筆對 1,437 節點）與提高 `HAS_SKILL` 職缺覆蓋（目前 30.4%）** | 這是 ablation 指標不動的**主因**（A1.5 結論 3）；比再調分類更有效 |
+| 7 | **擴充 skill alias + query-time LLM→既有 skill**（根源：skill 錨點進不去） | ✅ 進行中已落地：`skill_alias_seed_v0.2`→251 unique aliases；`use_llm_query_skill_resolve`；test@2000 `skill_anchor_rate` 0.004→0.541（LLM mock）。殘留：live Bedrock 評測、HAS_SKILL 覆蓋 30.4%、mock 拉高錨點後 NDCG 需權重調參（見 `graph/ablation_skill_anchor_fix.json`） |
 | 8 | 補 `47e543d` 的 ID 規則變更雙人 sign-off 紀錄 | Schema v0.1 凍結範圍的變更缺核准依據（A2.7 治理註記） |
 
 ### A4.2 需要 A/B 雙人 sign-off

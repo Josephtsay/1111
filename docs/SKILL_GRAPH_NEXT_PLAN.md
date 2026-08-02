@@ -4,6 +4,8 @@
 > 基準：`feat/skill-graph`；B 最新 `a28646b`，A 最新 `e68c347`（blacklist v0.2 + bake-off）
 > 本文件補充而非取代 `docs/SKILL_GRAPH_PLAYBOOK.md`
 > 定案路線：**職缺主路徑 = 2A／2B 斷詞與結構化；LLM = 技能分類（必做）＋可選職務對照表擴詞；禁止職類常識直接寫入 HAS_SKILL。**
+>
+> **2026-08-02 補定**：ablation 不動的根源是 **query→skill 錨點進不去**（非缺 occupation、非分類）。主線改為 **擴充 skill alias + query-time LLM 封閉集合映射到既有 skill ID**；職務對照表／CORE_SKILL 只當候選短名單，不寫回圖、不當 HAS_SKILL。
 
 ---
 
@@ -221,23 +223,44 @@ B 回報給 A：
 
 ---
 
-## 10. 相關路徑
+## 10. Phase Q — Query→skill 錨點入口（根源修復，2026-08-02）
+
+| ID | 任務 | 狀態 | Done when |
+|----|------|------|-----------|
+| Q1 | `fixtures/skill_alias_seed_v0.2.csv` + `step3b --seed` | ✅ | unique alias ≫ 37（實測 251） |
+| Q2 | `pipeline/query_skill_llm.py` + prompt；closed-set；不回寫圖 | ✅ | flag `use_llm_query_skill_resolve` |
+| Q3 | step8：occupation 整句命中不再 early-return 擋 skill；`--measure-anchors` | ✅ | 報 `skill_anchor_rate` |
+| Q4 | ablation：alias-only vs alias+LLM | ✅ | 見 `graph/ablation_skill_anchor_fix.json` |
+
+實測（test 2,000 queries）：alias-only `skill_anchor_rate=0.004`；alias+LLM mock（occupation→CORE_SKILL 短名單）`=0.541`。  
+注意：mock 拉高錨點率後 full-retrieval NDCG 可能下降——證明根源指標與排序品質是兩件事；上線需 live LLM + 權重調參，不可只靠 mock 宣稱檢索增益。
+
+**明確不做**：把「LLM→工作大類」當主解法（那只開 occupation 入口）；對照表常識寫入 `HAS_SKILL`；Phase 4 全鏈 lexicon 重跑（除非另開預算）。
+
+---
+
+## 11. 相關路徑
 
 | 路徑 | 說明 |
 |------|------|
 | `docs/SKILL_GRAPH_PLAYBOOK.md` | 權威 schema／步驟／Gate |
 | `docs/SKILL_GRAPH_NEXT_PLAN.md` | 本文件 |
 | `pipeline/step_a5_soft_skill_blacklist.py` / `pipeline/step_a6_skill_classification.py` | A 的 blacklist 與分類 |
+| `pipeline/build_skill_alias_seed_v0.2.py` / `pipeline/step3b_derive_aliases.py` | skill alias 擴充 |
+| `pipeline/query_skill_llm.py` / `prompts/llm_query_skill_resolve_v0.1.txt` | query→既有 skill（LLM） |
 | `fixtures/soft_skill_blacklist_v*.csv` | Step5 過濾（自動取最新版） |
+| `fixtures/skill_alias_seed_v0.2.csv` | query skill alias seed |
 | `fixtures/skill_kind_eval_set_v0.1.csv` | 分類人工評測集 |
 | `configs/model_registry.yaml` | 模型與 flag 狀態 |
-| `job_skill_graph/metrics.py` | 已有 ndcg／mrr／hit，待接進 step8 |
+| `job_skill_graph/metrics.py` | ndcg／mrr／hit（已接 step8） |
+| `graph/ablation_skill_anchor_fix.json` | 錨點率／NDCG 對照 |
 
 ---
 
-## 11. 變更紀錄
+## 12. 變更紀錄
 
 | 日期 | 說明 |
 |------|------|
 | 2026-08-01 r1 | 初版：定案 LLM=分類＋可選擴詞 |
 | 2026-08-01 r2 | 分類必須接 blacklist 才有 ablation 效果；指標 harness 升為 Phase 2 且優先於擴詞；blacklist 單一來源；不升 dictionary_version；分類需自己的評測集；更正 v0.1 為恰好 0 hit 與 csv_mod 歸屬 |
+| 2026-08-02 | Phase Q：根源定為 query→skill 入口；擴 alias + LLM closed-set；不以 LLM→大類當主解法 |

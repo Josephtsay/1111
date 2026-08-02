@@ -59,9 +59,13 @@ class Step8Config:
     use_llm_extraction: bool = False
     use_llm_classification: bool = False
     use_llm_relations: bool = False
+    use_llm_query_skill_resolve: bool = False
     use_adaptive_traversal: bool = False
+    llm_query_skill_mock: bool = False
+    llm_query_skill_model: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     blacklist_path: Path | None = None
     run_eval: bool = False
+    measure_anchors: bool = False
     eval_split: str = "test"
     eval_limit: int | None = None
     run_id: str = ""
@@ -72,6 +76,7 @@ class Step8Config:
             "use_llm_extraction": self.use_llm_extraction,
             "use_llm_classification": self.use_llm_classification,
             "use_llm_relations": self.use_llm_relations,
+            "use_llm_query_skill_resolve": self.use_llm_query_skill_resolve,
             "use_adaptive_traversal": self.use_adaptive_traversal,
         }
 
@@ -83,6 +88,24 @@ def parse_step8_args(argv: list[str] | None = None) -> Step8Config:
         action="store_true",
         default=False,
         help="Enable LLM skill classification flag in manifest",
+    )
+    parser.add_argument(
+        "--use-llm-query-skill-resolve",
+        action="store_true",
+        default=False,
+        help="When deterministic resolve finds no skill, map query→existing skill IDs via LLM",
+    )
+    parser.add_argument(
+        "--llm-query-skill-mock",
+        action="store_true",
+        default=False,
+        help="Use deterministic substring mock instead of Bedrock (plumbing / offline)",
+    )
+    parser.add_argument(
+        "--llm-query-skill-model",
+        type=str,
+        default="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        help="Bedrock model id for query→skill resolve",
     )
     parser.add_argument(
         "--no-graph",
@@ -101,6 +124,12 @@ def parse_step8_args(argv: list[str] | None = None) -> Step8Config:
         action="store_true",
         default=False,
         help="Run full evaluation with relevance labels (NDCG/MRR/Hit metrics)",
+    )
+    parser.add_argument(
+        "--measure-anchors",
+        action="store_true",
+        default=False,
+        help="Measure skill/occupation anchor rates on eval-split queries (no NDCG)",
     )
     parser.add_argument(
         "--eval-split",
@@ -125,8 +154,12 @@ def parse_step8_args(argv: list[str] | None = None) -> Step8Config:
     return Step8Config(
         use_graph=not args.no_graph,
         use_llm_classification=args.use_llm_classification,
+        use_llm_query_skill_resolve=args.use_llm_query_skill_resolve,
+        llm_query_skill_mock=args.llm_query_skill_mock,
+        llm_query_skill_model=args.llm_query_skill_model,
         blacklist_path=args.blacklist,
         run_eval=args.eval,
+        measure_anchors=args.measure_anchors,
         eval_split=args.eval_split,
         eval_limit=args.eval_limit,
         run_id=args.run_id,
@@ -263,7 +296,11 @@ class GraphIndex:
                     self.co_occurs[src].append((tgt, npmi))
                     self.co_occurs[tgt].append((src, npmi))
                 elif etype == "CORE_SKILL":
-                    rate = float(row.get("rate") or 0)
+                    # Prefer effective_rate when Step 5 applied retained_downweight
+                    eff = row.get("effective_rate")
+                    rate = float(
+                        eff if eff not in (None, "") else (row.get("rate") or 0)
+                    )
                     occ = src.replace("occ:", "")
                     self.core_skills[occ].append((tgt, rate))
 
@@ -549,19 +586,21 @@ def resolve_query(query: str, index: GraphIndex) -> QueryResolution:
         )
         return result
 
-    # 1. Try full query as skill
+    # 1. Try full query as skill — pure skill queries can return early.
     skill_id = _resolve_skill(normalized, index)
     if skill_id:
         result.resolved_skills.append(skill_id)
         result.resolution_log.append(f"full_query → {skill_id}")
         return result
 
-    # 2. Try full query as occupation
+    # 2. Try full query as occupation — record but do NOT return. Returning here
+    #    permanently blocked skill anchors on occupation-shaped queries (the
+    #    dominant real-traffic pattern) and left LLM skill fallback unreachable
+    #    for any caller that only invoked resolve_query.
     occ_id = _resolve_occupation(normalized, index)
     if occ_id:
         result.resolved_occupations.append(occ_id)
         result.resolution_log.append(f"full_query → {occ_id}")
-        return result
 
     # 3. Resolve each preprocessed token (exact only). Skip the full string —
     #    already tried above — so multi-anchor queries can accumulate.
@@ -620,6 +659,72 @@ def resolve_query(query: str, index: GraphIndex) -> QueryResolution:
     return result
 
 
+def enrich_resolution_with_llm_skills(
+    query: str,
+    resolution: QueryResolution,
+    index: GraphIndex,
+    *,
+    mock: bool = False,
+    model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    cache: dict[str, list[str]] | None = None,
+) -> QueryResolution:
+    """
+    If deterministic resolve found no skill anchors, ask LLM (closed-set) to
+    map the query onto existing skill IDs. Never writes alias/registry/edges.
+
+    Fires even when occupation anchors already exist — that is the root-cause
+    path: most real queries hit occ / nothing and never open a skill node.
+    """
+    if resolution.resolved_skills:
+        return resolution
+    if resolution.resolution_log and any(
+        "intent_denylist" in line for line in resolution.resolution_log
+    ):
+        return resolution
+
+    cache_key = query.strip()
+    if cache is not None and cache_key in cache:
+        for sid in cache[cache_key]:
+            if sid not in resolution.resolved_skills:
+                resolution.resolved_skills.append(sid)
+        if cache[cache_key]:
+            resolution.resolution_log.append(
+                f"llm_query_skill (cached) → {cache[cache_key]}"
+            )
+        else:
+            resolution.resolution_log.append("llm_query_skill (cached) → []")
+        return resolution
+
+    from query_skill_llm import resolve_skills_with_llm
+
+    llm_result = resolve_skills_with_llm(
+        query,
+        resolution.resolved_occupations,
+        index,
+        model_id=model_id,
+        mock=mock,
+    )
+    if cache is not None:
+        cache[cache_key] = list(llm_result.skill_ids)
+
+    if llm_result.source == "error":
+        resolution.resolution_log.append(
+            f"llm_query_skill error: {llm_result.error}"
+        )
+        return resolution
+
+    for sid in llm_result.skill_ids:
+        if sid not in resolution.resolved_skills:
+            resolution.resolved_skills.append(sid)
+    resolution.resolution_log.append(
+        f"llm_query_skill ({llm_result.source}, "
+        f"cand={llm_result.candidate_count}, "
+        f"conf={llm_result.confidence:.2f}) → {llm_result.skill_ids}"
+        + (f" [{llm_result.reason}]" if llm_result.reason else "")
+    )
+    return resolution
+
+
 _LATIN_RE = re.compile(r"[a-z0-9]")
 _CJK_ONLY_RE = re.compile(r"^[\u4e00-\u9fff\u3400-\u4dbf]+$")
 
@@ -667,14 +772,17 @@ def _resolve_skill(
     splitting used to find.
     """
     # Direct registry hit
-    candidate = f"skill:{normalized.replace(' ', '_')}"
+    underscored = normalized.replace(" ", "_")
+    candidate = f"skill:{underscored}"
     if candidate in index.skill_to_jobs:
         return candidate
-    # Alias lookup
-    if normalized in index.skill_alias:
-        canonical = index.skill_alias[normalized]
-        if canonical in index.skill_to_jobs:
-            return canonical
+    # Alias lookup — alias_key uses underscore form (normalize_key); query
+    # tokens may still contain spaces after normalize_query_token.
+    for alias_key in (normalized, underscored):
+        if alias_key in index.skill_alias:
+            canonical = index.skill_alias[alias_key]
+            if canonical in index.skill_to_jobs:
+                return canonical
     # Try with dots preserved (node.js)
     candidate_dot = f"skill:{normalized}"
     if candidate_dot in index.skill_to_jobs:
@@ -946,6 +1054,33 @@ SKILL_KIND_WEIGHTS = {
     "non_skill": 0.3,
 }
 
+# Playbook #14 retained_downweight (Office supernodes). Loaded from
+# fixtures/skill_downweight_v0.1.csv when present.
+_DEFAULT_DOWNWEIGHT_PATH = _REPO_ROOT / "fixtures" / "skill_downweight_v0.1.csv"
+
+
+def _load_skill_downweights(path: Path | None = None) -> dict[str, float]:
+    path = path or _DEFAULT_DOWNWEIGHT_PATH
+    if not path.exists():
+        return {}
+    weights: dict[str, float] = {}
+    with path.open(encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            status = (row.get("status") or "").strip()
+            if status and status not in ("retained_downweight", "active"):
+                continue
+            cid = (row.get("canonical_id") or "").strip()
+            try:
+                w = float(row.get("weight") or "1")
+            except ValueError:
+                continue
+            if cid and 0.0 < w <= 1.0:
+                weights[cid] = w
+    return weights
+
+
+_SKILL_DOWNWEIGHTS = _load_skill_downweights()
+
 
 def _skill_kind_multiplier(
     skill_id: str, index: GraphIndex, *, enabled: bool
@@ -954,6 +1089,10 @@ def _skill_kind_multiplier(
         return 1.0
     kind = getattr(index, "skill_kind", {}).get(skill_id, "")
     return SKILL_KIND_WEIGHTS.get(kind, 1.0)
+
+
+def _skill_downweight_multiplier(skill_id: str) -> float:
+    return _SKILL_DOWNWEIGHTS.get(skill_id, 1.0)
 
 
 # When an occupation anchor would fan out past this many jobs (direct +
@@ -971,6 +1110,10 @@ def traverse_and_rank(
     expand_min_npmi: float = 0.2,
     use_skill_kind_weights: bool = False,
     narrow_large_occ: bool = True,
+    use_llm_query_skill_resolve: bool = False,
+    llm_query_skill_mock: bool = False,
+    llm_query_skill_model: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    llm_skill_cache: dict[str, list[str]] | None = None,
 ) -> TraversalResult:
     """
     Execute graph traversal for a query. Strategy:
@@ -981,9 +1124,19 @@ def traverse_and_rank(
     - CORE_SKILL boost: jobs matching occupation's core skills get bonus
     - Credential path: credential mentions resolved from query → jobs
     - Multi-skill: jobs matching multiple query skills get intersection bonus
+    - Optional LLM skill resolve when deterministic path found no skill anchors
     """
     t0 = time.time()
     resolution = resolve_query(query, index)
+    if use_llm_query_skill_resolve:
+        resolution = enrich_resolution_with_llm_skills(
+            query,
+            resolution,
+            index,
+            mock=llm_query_skill_mock,
+            model_id=llm_query_skill_model,
+            cache=llm_skill_cache,
+        )
     result = TraversalResult(query=query, resolution=resolution)
 
     # Score accumulator: job_id → score
@@ -1000,18 +1153,21 @@ def traverse_and_rank(
         kind_mult = _skill_kind_multiplier(
             skill_id, index, enabled=use_skill_kind_weights
         )
+        dw_mult = _skill_downweight_multiplier(skill_id)
         kind_note = ""
         if use_skill_kind_weights and kind_mult != 1.0:
             kind_note = (
                 f" [kind={getattr(index, 'skill_kind', {}).get(skill_id, '')}"
                 f" x{kind_mult}]"
             )
+        if dw_mult != 1.0:
+            kind_note += f" [downweight x{dw_mult}]"
         result.trace_lines.append(
             f"→ {skill_id} <-[HAS_SKILL]- {len(jobs):,} jobs (0-hop exact){kind_note}"
         )
         for job_id, req, conf in jobs:
             weight = 1.0 if req == "required" else (0.8 if req == "preferred" else 0.6)
-            job_scores[job_id] += weight * kind_mult
+            job_scores[job_id] += weight * kind_mult * dw_mult
             job_paths[job_id].append(f"exact:{skill_id}")
             job_skill_matches[job_id].add(skill_id)
 
@@ -1055,8 +1211,9 @@ def traverse_and_rank(
                 expand_mult = _skill_kind_multiplier(
                     related_skill, index, enabled=use_skill_kind_weights
                 )
+                dw_mult = _skill_downweight_multiplier(related_skill)
                 for job_id, req, conf in expanded_jobs:
-                    job_scores[job_id] += 0.3 * npmi * expand_mult
+                    job_scores[job_id] += 0.3 * npmi * expand_mult * dw_mult
                     job_paths[job_id].append(f"expand:{related_skill}(npmi={npmi:.2f})")
 
     # Credential path: try resolving query tokens as credentials
@@ -1658,6 +1815,11 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
     incremental_rows: list[dict] = []
     t0 = time.time()
     query_count = 0
+    llm_skill_cache: dict[str, list[str]] = {}
+    anchor_skill = 0
+    anchor_occ = 0
+    anchor_both = 0
+    anchor_none = 0
 
     for _, qrow in queries_df.iterrows():
         query_id = qrow["query_id"]
@@ -1676,7 +1838,21 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
                 index,
                 top_k=TOP_K,
                 use_skill_kind_weights=config.use_llm_classification,
+                use_llm_query_skill_resolve=config.use_llm_query_skill_resolve,
+                llm_query_skill_mock=config.llm_query_skill_mock,
+                llm_query_skill_model=config.llm_query_skill_model,
+                llm_skill_cache=llm_skill_cache,
             )
+            has_s = bool(result.resolution.resolved_skills)
+            has_o = bool(result.resolution.resolved_occupations)
+            if has_s and has_o:
+                anchor_both += 1
+            elif has_s:
+                anchor_skill += 1
+            elif has_o:
+                anchor_occ += 1
+            else:
+                anchor_none += 1
             graph_ranked = [
                 job["job_id"].removeprefix("job:") for job in result.top_jobs
             ]
@@ -1711,11 +1887,16 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
                 })
 
         query_count += 1
-        if query_count % 500 == 0:
-            print(f"    Scored {query_count:,} queries...")
+        progress_every = 10 if config.use_llm_query_skill_resolve else 500
+        if query_count % progress_every == 0:
+            print(
+                f"    Scored {query_count:,} queries..."
+                f" (llm_cache={len(llm_skill_cache)})",
+                flush=True,
+            )
 
     eval_time = time.time() - t0
-    print(f"  Retrieval done: {query_count:,} queries in {eval_time:.1f}s")
+    print(f"  Retrieval done: {query_count:,} queries in {eval_time:.1f}s", flush=True)
 
     if not ranking_rows:
         print("  ⚠ No ranking rows produced!")
@@ -1775,6 +1956,27 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
               f"({incremental['incremental_recall_share']:.2%})")
         print(f"    queries helped: {queries_helped:,} / {len(incremental_rows):,}")
 
+    anchor_total = anchor_skill + anchor_occ + anchor_both + anchor_none
+    anchor_stats = {
+        "queries": anchor_total,
+        "skill_only": anchor_skill,
+        "occupation_only": anchor_occ,
+        "both": anchor_both,
+        "none": anchor_none,
+        "skill_anchor_rate": (
+            (anchor_skill + anchor_both) / anchor_total if anchor_total else 0.0
+        ),
+        "occupation_anchor_rate": (
+            (anchor_occ + anchor_both) / anchor_total if anchor_total else 0.0
+        ),
+        "unresolved_rate": (anchor_none / anchor_total if anchor_total else 0.0),
+    }
+    if config.use_graph and anchor_total:
+        print("\n  ─── Anchor rates (root-cause metric) ───")
+        print(f"    skill_anchor_rate:      {anchor_stats['skill_anchor_rate']:.4f}")
+        print(f"    occupation_anchor_rate: {anchor_stats['occupation_anchor_rate']:.4f}")
+        print(f"    unresolved_rate:        {anchor_stats['unresolved_rate']:.4f}")
+
     eval_report = {
         "step": "step8_evaluation",
         "run_id": config.run_id or "default",
@@ -1789,6 +1991,7 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
             "query_count": query_count,
             "label_count": len(ranking_rows),
         },
+        "anchor_rates": anchor_stats,
         "metrics": metrics_summary,
         "eval_time_seconds": round(eval_time, 1),
         "per_query_summary": {
@@ -1802,6 +2005,83 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
     return eval_report
 
 
+def measure_anchor_rates(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
+    """Resolve-only probe: skill / occupation / unresolved rates on a split."""
+    print("\n" + "=" * 60)
+    print("ANCHOR RATE MEASUREMENT")
+    print("=" * 60)
+    print(f"  Split: {config.eval_split}")
+    print(f"  Limit: {config.eval_limit or 'all'}")
+    print(f"  LLM skill resolve: {config.use_llm_query_skill_resolve}"
+          f" (mock={config.llm_query_skill_mock})")
+
+    queries_df, _labels = _load_eval_labels(config.eval_split, config.eval_limit)
+    if queries_df.empty:
+        return {"error": "no_queries", "split": config.eval_split}
+
+    llm_cache: dict[str, list[str]] = {}
+    skill_only = occ_only = both = none = 0
+    llm_filled = 0
+    t0 = time.time()
+    for _, qrow in queries_df.iterrows():
+        q = str(qrow["query"])
+        resolution = resolve_query(q, index)
+        before = bool(resolution.resolved_skills)
+        if config.use_llm_query_skill_resolve:
+            resolution = enrich_resolution_with_llm_skills(
+                q,
+                resolution,
+                index,
+                mock=config.llm_query_skill_mock,
+                model_id=config.llm_query_skill_model,
+                cache=llm_cache,
+            )
+            if not before and resolution.resolved_skills:
+                llm_filled += 1
+        has_s = bool(resolution.resolved_skills)
+        has_o = bool(resolution.resolved_occupations)
+        if has_s and has_o:
+            both += 1
+        elif has_s:
+            skill_only += 1
+        elif has_o:
+            occ_only += 1
+        else:
+            none += 1
+
+    total = skill_only + occ_only + both + none
+    report = {
+        "step": "step8_anchor_rates",
+        "run_id": config.run_id or "anchors",
+        "feature_flags": config.feature_flags_dict(),
+        "llm_query_skill_mock": config.llm_query_skill_mock,
+        "eval_config": {
+            "split": config.eval_split,
+            "limit": config.eval_limit,
+            "query_count": total,
+        },
+        "counts": {
+            "skill_only": skill_only,
+            "occupation_only": occ_only,
+            "both": both,
+            "none": none,
+            "llm_filled_skill": llm_filled,
+        },
+        "skill_anchor_rate": (skill_only + both) / total if total else 0.0,
+        "occupation_anchor_rate": (occ_only + both) / total if total else 0.0,
+        "unresolved_rate": none / total if total else 0.0,
+        "elapsed_seconds": round(time.time() - t0, 2),
+        "unique_skill_aliases": len(index.skill_alias),
+    }
+    print(f"  Queries: {total:,}")
+    print(f"  skill_anchor_rate:      {report['skill_anchor_rate']:.4f}")
+    print(f"  occupation_anchor_rate: {report['occupation_anchor_rate']:.4f}")
+    print(f"  unresolved_rate:        {report['unresolved_rate']:.4f}")
+    print(f"  llm_filled_skill:       {llm_filled:,}")
+    print(f"  unique skill aliases:   {report['unique_skill_aliases']:,}")
+    return report
+
+
 def main(argv: list[str] | None = None) -> None:
     config = parse_step8_args(argv)
 
@@ -1809,6 +2089,8 @@ def main(argv: list[str] | None = None) -> None:
     print("Step 8 — Retrieval Smoke Test")
     if config.run_eval:
         print("         + Evaluation Harness (NDCG/MRR/Hit)")
+    if config.measure_anchors:
+        print("         + Anchor Rate Measurement")
     print("=" * 60)
     print(f"  Feature flags: {config.feature_flags_dict()}")
     if config.run_id:
@@ -1819,10 +2101,17 @@ def main(argv: list[str] | None = None) -> None:
 
     results = []
     print("\n" + "─" * 60)
+    llm_skill_cache: dict[str, list[str]] = {}
 
     for query in SMOKE_QUERIES:
         result = traverse_and_rank(
-            query, index, use_skill_kind_weights=config.use_llm_classification
+            query,
+            index,
+            use_skill_kind_weights=config.use_llm_classification,
+            use_llm_query_skill_resolve=config.use_llm_query_skill_resolve,
+            llm_query_skill_mock=config.llm_query_skill_mock,
+            llm_query_skill_model=config.llm_query_skill_model,
+            llm_skill_cache=llm_skill_cache,
         )
         results.append(result)
 
@@ -1887,8 +2176,16 @@ def main(argv: list[str] | None = None) -> None:
     print(f"\n  Report: {report_path}")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Evaluation harness (--eval mode)
+    # Anchor-rate probe (--measure-anchors) and / or full eval (--eval)
     # ─────────────────────────────────────────────────────────────────────────
+    if config.measure_anchors:
+        anchor_report = measure_anchor_rates(index, config)
+        anchor_path = GRAPH_DIR / f"anchor_rates_{config.run_id or 'default'}.json"
+        anchor_path.write_text(
+            json.dumps(anchor_report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"\n  Anchor report: {anchor_path}")
+
     if config.run_eval:
         eval_report = run_evaluation(index, config)
         eval_path = GRAPH_DIR / f"eval_report_{config.run_id or 'default'}.json"

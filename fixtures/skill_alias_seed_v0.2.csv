@@ -1,0 +1,275 @@
+alias_key,raw_alias,language,preferred_targets,notes
+.net,.NET,en,.net|.net_core|dotnet,from_v0.1
+3dmax,3dmax,en,3ds_max,curated_v0.2
+3ds.max,3ds.max,en,3ds_max,auto_from_registry
+3dsmax,3dsmax,en,3ds_max,curated_v0.2
+adobe.acrobat.dc,adobe.acrobat.dc,en,adobe_acrobat_dc,auto_from_registry
+adobe.animate,adobe.animate,en,adobe_animate,auto_from_registry
+adobe.photoshop.lightroom,adobe.photoshop.lightroom,en,adobe_photoshop_lightroom,auto_from_registry
+adobe.xd,adobe.xd,en,adobe_xd,auto_from_registry
+adobe_illustrator,adobe_illustrator,en,illustrator,curated_v0.2
+adobe_photoshop,adobe_photoshop,en,photoshop,curated_v0.2
+adobe_xd,adobe_xd,en,adobe_xd,curated_v0.2
+after.effects,after.effects,en,after_effects,auto_from_registry
+after_effect,after_effect,en,after_effects,curated_v0.2
+aftereffects,aftereffects,en,after_effects,curated_v0.2
+ai,AI,en,ai|artificial_intelligence,short allowlist skill | from_v0.1
+airflow,airflow,en,apache_airflow_airflow,curated_v0.2
+altium.designer,altium.designer,en,altium_designer,auto_from_registry
+amazon.web.services.aws,amazon.web.services.aws,en,amazon_web_services_aws,auto_from_registry
+amazon_ecs,Amazon ECS,en,amazon_ecs_ecs/amazon_elastic_container_service,auto_from_registry
+amazon_elastic_container_service,Amazon Elastic Container Service,en,amazon_ecs_ecs/amazon_elastic_container_service,auto_from_registry
+amazon_web_services,Amazon Web Services,en,amazon_web_services_aws,from_v0.1
+angular.js,Angular.js,en,angular,from_v0.1
+angularjs,AngularJS,en,angular,from_v0.1
+apache.airflow.airflow,apache.airflow.airflow,en,apache_airflow_airflow,auto_from_registry
+apache.soap,apache.soap,en,apache_soap,auto_from_registry
+apache_airflow,apache_airflow,en,apache_airflow_airflow,curated_v0.2
+asp.net.mvc,asp.net.mvc,en,asp.net_mvc,auto_from_registry
+aspnet,aspnet,en,asp.net,curated_v0.2
+auto_cad,auto_cad,en,autocad,curated_v0.2
+autocad.2d,autocad.2d,en,autocad_2d,auto_from_registry
+autocad.3d,autocad.3d,en,autocad_3d,auto_from_registry
+autodesk.flame,autodesk.flame,en,autodesk_flame,auto_from_registry
+avid.media.composer,avid.media.composer,en,avid_media_composer,auto_from_registry
+aws,AWS,en,amazon_web_services_aws,from_v0.1
+axure.rp,axure.rp,en,axure_rp,auto_from_registry
+azure,Azure,en,azure_microsoft_azure,from_v0.1
+azure.microsoft.azure,azure.microsoft.azure,en,azure_microsoft_azure,auto_from_registry
+banner,Banner,en,edm、banner設計與製作,from_v0.1
+bi,BI,en,商業智慧_bi分析與應用,auto_from_registry
+c++,c++,en,c/c++,do not merge to C alone | curated_v0.2
+c/c++,c/c++,en,c/c++,curated_v0.2
+c_c++,c c++,en,c/c++,auto_from_registry
+c_sharp,C Sharp,en,c#,from_v0.1
+cad,cad,en,autocad,prefer AutoCAD over ArchiCAD for bare cad | curated_v0.2
+cadence.allegro,cadence.allegro,en,cadence_allegro,auto_from_registry
+ci/cd,CI/CD,en,ci/cd|cicd|ci_cd,from_v0.1
+cicd,CICD,en,ci/cd|cicd|ci_cd,from_v0.1
+cinema.4d,cinema.4d,en,cinema_4d,auto_from_registry
+circuit.design,circuit.design,en,circuit_design,auto_from_registry
+comsol.multiphysics,comsol.multiphysics,en,comsol_multiphysics,auto_from_registry
+corel.draw,corel.draw,en,corel_draw,auto_from_registry
+cplusplus,CPlusPlus,en,c/c++,from_v0.1
+cpp,CPP,en,c/c++,do not merge to C alone | from_v0.1
+creo,Creo,en,pro/e_creo,auto_from_registry
+creo.parametric.pro-e,creo.parametric.pro-e,en,creo_parametric_pro-e,auto_from_registry
+creo_parametric,Creo Parametric,en,creo_parametric_pro-e,auto_from_registry
+csharp,CSharp,en,c#,from_v0.1
+database.administrator,database.administrator,en,database_administrator,auto_from_registry
+database.management,database.management,en,database_management,auto_from_registry
+dcc,DCC,en,熟悉文件管制中心_dcc作業程序,auto_from_registry
+docker,docker,en,docker_docker_compose,compose compound key | curated_v0.2
+docker.docker.compose,docker.docker.compose,en,docker_docker_compose,auto_from_registry
+docker_compose,docker_compose,en,docker_docker_compose,curated_v0.2
+dotnet,dotnet,en,asp.net,no bare .NET node; map to ASP.NET | curated_v0.2
+ecs,ecs,en,amazon_ecs_ecs/amazon_elastic_container_service,curated_v0.2
+eda.electronic.design.automation,eda.electronic.design.automation,en,eda_electronic_design_automation,auto_from_registry
+eda.exploratory.data.analysis,eda.exploratory.data.analysis,en,eda_exploratory_data_analysis,auto_from_registry
+edm,EDM,en,edm、banner設計與製作,email marketing compound in structured seed | from_v0.1
+electronic_design_automation,Electronic Design Automation,en,eda_electronic_design_automation,auto_from_registry
+emc_emi,emc emi,en,emc/emi,auto_from_registry
+etl,ETL,en,etl,from_v0.1
+exploratory_data_analysis,Exploratory Data Analysis,en,eda_exploratory_data_analysis,auto_from_registry
+fb,FB,en,meta_business_suite_fb,auto_from_registry
+fcpx,FCPX,en,final_cut_pro_final_cut_pro_x/fcpx,auto_from_registry
+feature_engineering,Feature Engineering,en,feature_engineering_特徵工程,auto_from_registry
+final.cut.prox,final.cut.prox,en,final_cut_prox,auto_from_registry
+final_cut_pro,Final Cut Pro,en,final_cut_pro_final_cut_pro_x/fcpx,auto_from_registry
+final_cut_pro_x,Final Cut Pro X,en,final_cut_pro_final_cut_pro_x/fcpx,auto_from_registry
+firewall,Firewall,en,firewall_防火牆,auto_from_registry
+free.hand,free.hand,en,free_hand,auto_from_registry
+ga4,GA4,en,google_analytics_4_ga4,auto_from_registry
+gcp,GCP,en,google_cloud_platform_(gcp|gcp|google_cloud,from_v0.1
+gcp.google.cloud.platform,gcp.google.cloud.platform,en,gcp_google_cloud_platform,auto_from_registry
+go,Go,en,golang_go,auto_from_registry
+go_lang,go_lang,en,golang_go,curated_v0.2
+golang,Golang,en,go|golang,from_v0.1
+golang.go,golang.go,en,golang_go,auto_from_registry
+google.ads,google.ads,en,google_ads,auto_from_registry
+google.analytics.4.ga4,google.analytics.4.ga4,en,google_analytics_4_ga4,auto_from_registry
+google_analytics_4,Google Analytics 4,en,google_analytics_4_ga4,auto_from_registry
+google_cloud,Google Cloud,en,google_cloud_platform_(gcp|gcp|google_cloud,from_v0.1
+google_cloud_platform,google_cloud_platform,en,gcp_google_cloud_platform,curated_v0.2
+hp,HP,en,hp,brand / hardware skill token | from_v0.1
+ig,IG,en,instagram_商業經營_ig,auto_from_registry
+instagram_商業經營,Instagram 商業經營,mixed,instagram_商業經營_ig,auto_from_registry
+jdbc./.odbc,jdbc./.odbc,en,jdbc_/_odbc,auto_from_registry
+jdbc___odbc,jdbc_ _odbc,en,jdbc_/_odbc,auto_from_registry
+js,JS,en,javascript,from_v0.1
+k8s,K8s,en,kubernetes_k8s,from_v0.1
+k8s_cluster,K8s cluster,en,kubernetes_k8s,from_v0.1
+kubernete,Kubernete,en,kubernetes_k8s,typo tolerance | from_v0.1
+kubernetes,Kubernetes,en,kubernetes_k8s,from_v0.1
+kubernetes.k8s,kubernetes.k8s,en,kubernetes_k8s,auto_from_registry
+libreoffice.base,libreoffice.base,en,libreoffice_base,auto_from_registry
+libreoffice.calc,libreoffice.calc,en,libreoffice_calc,auto_from_registry
+libreoffice.draw,libreoffice.draw,en,libreoffice_draw,auto_from_registry
+libreoffice.impress,libreoffice.impress,en,libreoffice_impress,auto_from_registry
+libreoffice.math,libreoffice.math,en,libreoffice_math,auto_from_registry
+libreoffice.writer,libreoffice.writer,en,libreoffice_writer,auto_from_registry
+line_oa,Line OA,en,line_官方帳號_line_oa,auto_from_registry
+line_官方帳號,Line 官方帳號,mixed,line_官方帳號_line_oa,auto_from_registry
+llm,LLM,en,大型語言模型_llm應用開發,auto_from_registry
+lnternet.explorer,lnternet.explorer,en,lnternet_explorer,auto_from_registry
+mac.os,mac.os,en,mac_os,auto_from_registry
+mac.os.x,mac.os.x,en,mac_os_x,auto_from_registry
+machine_learning,machine_learning,en,機器學習_machine_learning模型開發與應用,curated_v0.2
+mariadb,mariadb,en,mysql/mariadb,curated_v0.2
+meta.business.suite.fb,meta.business.suite.fb,en,meta_business_suite_fb,auto_from_registry
+meta_business_suite,meta_business_suite,en,meta_business_suite_fb,curated_v0.2
+microsoft.dynamics,microsoft.dynamics,en,microsoft_dynamics,auto_from_registry
+microsoft.publisher,microsoft.publisher,en,microsoft_publisher,auto_from_registry
+microsoft_azure,microsoft_azure,en,azure_microsoft_azure,curated_v0.2
+microsoft_visual_studio,Microsoft Visual Studio,en,visual_studio_microsoft_visual_studio,auto_from_registry
+ml,ML,en,machine_learning|ml,from_v0.1
+ml_models,ml_models,en,機器學習_machine_learning模型開發與應用,curated_v0.2
+ms.sql.mssql/sql.server,ms.sql.mssql/sql.server,en,ms_sql_mssql/sql_server,auto_from_registry
+ms_sql,ms_sql,en,ms_sql_mssql/sql_server,curated_v0.2
+ms_sql_mssql_sql_server,ms_sql_mssql sql_server,en,ms_sql_mssql/sql_server,auto_from_registry
+mssql,MSSQL,en,ms_sql_mssql/sql_server,from_v0.1
+mysql,mysql,en,mysql/mariadb,curated_v0.2
+mysql_mariadb,mysql mariadb,en,mysql/mariadb,auto_from_registry
+natural_language_processing,natural_language_processing,en,nlp_natural_language_processing,curated_v0.2
+netobjects.fusion,netobjects.fusion,en,netobjects_fusion,auto_from_registry
+next,next,en,next.js,curated_v0.2
+next.js,Next.js,en,next.js,from_v0.1
+nextjs,NextJS,en,next.js,from_v0.1
+nlp,NLP,en,natural_language_processing|nlp,from_v0.1
+nlp.natural.language.processing,nlp.natural.language.processing,en,nlp_natural_language_processing,auto_from_registry
+node,Node,en,node.js_node/nodejs,abbreviation → Node.js | from_v0.1
+node.js,Node.js,en,node.js_node/nodejs,from_v0.1
+node.js.node/nodejs,node.js.node/nodejs,en,node.js_node/nodejs,auto_from_registry
+node.js_node_nodejs,node.js_node nodejs,en,node.js_node/nodejs,auto_from_registry
+node_js,Node JS,en,node.js_node/nodejs,from_v0.1
+nodejs,NodeJS,en,node.js_node/nodejs,from_v0.1
+nuxt,Nuxt,en,nuxt.js,from_v0.1
+nuxtjs,NuxtJS,en,nuxt.js,from_v0.1
+nx,NX,en,nx,Siemens NX | from_v0.1
+onespace.designer,onespace.designer,en,onespace_designer,auto_from_registry
+openoffice.calc,openoffice.calc,en,openoffice_calc,auto_from_registry
+openoffice.draw,openoffice.draw,en,openoffice_draw,auto_from_registry
+openoffice.impress,openoffice.impress,en,openoffice_impress,auto_from_registry
+openoffice.math,openoffice.math,en,openoffice_math,auto_from_registry
+openoffice.writer,openoffice.writer,en,openoffice_writer,auto_from_registry
+oracle.erp,oracle.erp,en,oracle_erp,auto_from_registry
+oracle.financials,oracle.financials,en,oracle_financials,auto_from_registry
+oracle.forms,oracle.forms,en,oracle_forms,auto_from_registry
+oracle.hcm.cloud,oracle.hcm.cloud,en,oracle_hcm_cloud,auto_from_registry
+oracle_erp,oracle_erp,en,oracle_erp,curated_v0.2
+os_2,os 2,en,os/2,auto_from_registry
+p&id,P&ID,en,管線儀表流程圖_p&id,auto_from_registry
+pl,PL,en,procedural_language_pl/sql,auto_from_registry
+postgres,Postgres,en,postgresql,from_v0.1
+postgresql,PostgreSQL,en,postgresql,from_v0.1
+power.bi,power.bi,en,power_bi,auto_from_registry
+power_bi,power_bi,en,power_bi,identity surface | curated_v0.2
+powerbi,powerbi,en,power_bi,curated_v0.2
+powershell,PowerShell,en,powershell|windows_powershell,from_v0.1
+ppt,ppt,en,powerpoint,PowerPoint abbreviation | curated_v0.2
+pptx,pptx,en,powerpoint,PowerPoint file ext | curated_v0.2
+pro-e,PRO-E,en,creo_parametric_pro-e,auto_from_registry
+pro.tools,pro.tools,en,pro_tools,auto_from_registry
+pro/e,Pro/E,en,pro/e_creo,auto_from_registry
+pro/e.creo,pro/e.creo,en,pro/e_creo,auto_from_registry
+pro_e_creo,pro e_creo,en,pro/e_creo,auto_from_registry
+procedural.language.pl/sql,procedural.language.pl/sql,en,procedural_language_pl/sql,auto_from_registry
+procedural_language,Procedural Language,en,procedural_language_pl/sql,auto_from_registry
+procedural_language_pl_sql,procedural_language_pl sql,en,procedural_language_pl/sql,auto_from_registry
+psql,psql,en,postgresql,curated_v0.2
+ptc.creo.elements/direct,ptc.creo.elements/direct,en,ptc_creo_elements/direct,auto_from_registry
+ptc_creo_elements_direct,ptc_creo_elements direct,en,ptc_creo_elements/direct,auto_from_registry
+react,React,en,react_reactjs,ReactJS family | from_v0.1
+react.js,React.js,en,react_reactjs,from_v0.1
+react.native,react.native,en,react_native,auto_from_registry
+react.reactjs,react.reactjs,en,react_reactjs,auto_from_registry
+react_js,React JS,en,react_reactjs,from_v0.1
+reactjs,ReactJS,en,react_reactjs,from_v0.1
+ruby.on.rails,ruby.on.rails,en,ruby_on_rails,auto_from_registry
+ruby_qt,ruby qt,en,ruby/qt,auto_from_registry
+salesforce,salesforce,en,salesforce_crm,curated_v0.2
+salesforce.crm,salesforce.crm,en,salesforce_crm,auto_from_registry
+san_nas,san nas,en,san/nas,auto_from_registry
+sap,sap,en,sap_erp,prefer SAP ERP over substring noise | curated_v0.2
+sap.erp,sap.erp,en,sap_erp,auto_from_registry
+sap.erp.corporate.services,sap.erp.corporate.services,en,sap_erp_corporate_services,auto_from_registry
+sap.erp.human.capital.management,sap.erp.human.capital.management,en,sap_erp_human_capital_management,auto_from_registry
+sap.erp.operations,sap.erp.operations,en,sap_erp_operations,auto_from_registry
+sap_erp,sap_erp,en,sap_erp,curated_v0.2
+scikit-learn,scikit-learn,en,scikit-learn|sklearn,from_v0.1
+seo,seo,en,seo_搜尋引擎優化,curated_v0.2
+shell.script,shell.script,en,shell_script,auto_from_registry
+sklearn,sklearn,en,scikit-learn|sklearn,from_v0.1
+smith_chart,Smith chart,en,阻抗匹配_smith_chart設計能力,auto_from_registry
+sony.vegas.vegas.pro/vegas,sony.vegas.vegas.pro/vegas,en,sony_vegas_vegas_pro/vegas,auto_from_registry
+sony_vegas,Sony Vegas,en,sony_vegas_vegas_pro/vegas,auto_from_registry
+sony_vegas_vegas_pro_vegas,sony_vegas_vegas_pro vegas,en,sony_vegas_vegas_pro/vegas,auto_from_registry
+spring.boot,spring.boot,en,spring_boot,auto_from_registry
+spring.data,spring.data,en,spring_data,auto_from_registry
+spring.framework,spring.framework,en,spring_framework,auto_from_registry
+spring_boot,Spring Boot,en,spring_boot,from_v0.1
+springboot,SpringBoot,en,spring_boot,from_v0.1
+sql,SQL,en,procedural_language_pl/sql,auto_from_registry
+sql_server,SQL Server,en,ms_sql_mssql/sql_server,from_v0.1
+sun.os,sun.os,en,sun_os,auto_from_registry
+systems.administration,systems.administration,en,systems_administration,auto_from_registry
+systems.analysis,systems.analysis,en,systems_analysis,auto_from_registry
+tcp_ip,tcp ip,en,tcp/ip,auto_from_registry
+tf,TF,en,tensorflow,from_v0.1
+tiptop,tiptop,en,鼎新tiptop_erp,curated_v0.2
+torch,Torch,en,pytorch,from_v0.1
+ts,TS,en,typescript,from_v0.1
+typescript,TypeScript,en,typescript,from_v0.1
+unreal.engine.4,unreal.engine.4,en,unreal_engine_4,auto_from_registry
+vb,VB,en,visual_basic_vb,auto_from_registry
+vb.net,vb.net,en,vb.net_visual_basic_.net,curated_v0.2
+vb.net.visual.basic..net,vb.net.visual.basic..net,en,vb.net_visual_basic_.net,auto_from_registry
+vb.script,vb.script,en,vb_script,auto_from_registry
+vbnet,vbnet,en,vb.net_visual_basic_.net,curated_v0.2
+vegas,Vegas,en,sony_vegas_vegas_pro/vegas,auto_from_registry
+vegas_pro,Vegas Pro,en,sony_vegas_vegas_pro/vegas,auto_from_registry
+visual.basic.vb,visual.basic.vb,en,visual_basic_vb,auto_from_registry
+visual.c#,visual.c#,en,visual_c#,auto_from_registry
+visual.c++,visual.c++,en,visual_c++,auto_from_registry
+visual.foxpro,visual.foxpro,en,visual_foxpro,auto_from_registry
+visual.j#,visual.j#,en,visual_j#,auto_from_registry
+visual.j++,visual.j++,en,visual_j++,auto_from_registry
+visual.sourcesafe,visual.sourcesafe,en,visual_sourcesafe,auto_from_registry
+visual_basic,Visual basic,en,visual_basic_vb,auto_from_registry
+visual_basic_.net,Visual Basic .net,en,vb.net_visual_basic_.net,auto_from_registry
+visual_studio,Visual Studio,en,visual_studio_microsoft_visual_studio,auto_from_registry
+vue,Vue,en,vue.js_vue/vuejs,from_v0.1
+vue.js,Vue.js,en,vue.js_vue/vuejs,from_v0.1
+vue.js.vue/vuejs,vue.js.vue/vuejs,en,vue.js_vue/vuejs,auto_from_registry
+vue.js_vue_vuejs,vue.js_vue vuejs,en,vue.js_vue/vuejs,auto_from_registry
+vuejs,VueJS,en,vue.js_vue/vuejs,from_v0.1
+waf,WAF,en,waf_web_application_firewall,auto_from_registry
+waf.web.application.firewall,waf.web.application.firewall,en,waf_web_application_firewall,auto_from_registry
+web_application_firewall,Web Application Firewall,en,waf_web_application_firewall,auto_from_registry
+windows.10,windows.10,en,windows_10,auto_from_registry
+windows.11,windows.11,en,windows_11,auto_from_registry
+windows.7,windows.7,en,windows_7,auto_from_registry
+windows.8,windows.8,en,windows_8,auto_from_registry
+windows.98,windows.98,en,windows_98,auto_from_registry
+windows.ce,windows.ce,en,windows_ce,auto_from_registry
+windows.mobile,windows.mobile,en,windows_mobile,auto_from_registry
+windows.nt,windows.nt,en,windows_nt,auto_from_registry
+windows.server.2012.2019.2022,windows.server.2012.2019.2022,en,windows_server_2012_2019_2022,auto_from_registry
+windows.vista,windows.vista,en,windows_vista,auto_from_registry
+windows.xp,windows.xp,en,windows_xp,auto_from_registry
+windows_server,Windows Server,en,windows_server_2012_2019_2022,auto_from_registry
+xml.web.services,xml.web.services,en,xml_web_services,auto_from_registry
+商業智慧_分析與應用,商業智慧 分析與應用,zh,商業智慧_bi分析與應用,auto_from_registry
+大型語言模型_應用開發,大型語言模型 應用開發,zh,大型語言模型_llm應用開發,auto_from_registry
+抽_水站之操作與維護,抽 水站之操作與維護,zh,抽_揚水站之操作與維護,auto_from_registry
+搜尋引擎優化,搜尋引擎優化,zh,seo_搜尋引擎優化,curated_v0.2
+機器學習_模型開發與應用,機器學習 模型開發與應用,zh,機器學習_machine_learning模型開發與應用,auto_from_registry
+正航,正航,zh,正航,Taiwan ERP | from_v0.1
+熟悉文件管制中心_作業程序,熟悉文件管制中心 作業程序,zh,熟悉文件管制中心_dcc作業程序,auto_from_registry
+特徵工程,特徵工程,zh,feature_engineering_特徵工程,auto_from_registry
+管線儀表流程圖,管線儀表流程圖,zh,管線儀表流程圖_p&id,auto_from_registry
+自然語言處理_技術應用,自然語言處理 技術應用,zh,自然語言處理_nlp技術應用,auto_from_registry
+防火牆,防火牆,zh,firewall_防火牆,auto_from_registry
+阻抗匹配_設計能力,阻抗匹配 設計能力,zh,阻抗匹配_smith_chart設計能力,auto_from_registry
+鼎新,鼎新,zh,鼎新_erp,curated_v0.2
+鼎新erp,鼎新erp,mixed,鼎新_erp,curated_v0.2
