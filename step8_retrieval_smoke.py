@@ -6,6 +6,9 @@ Playbook: §Step 8
 Proves the graph is usable: from a query, traverse the graph to find jobs,
 and produce an explainable traversal trace.
 
+Query preprocessing (train-searchlog driven) runs before resolution:
+separator split, job-suffix peel, reverse-suffix occupation match.
+
 Smoke queries (Playbook recommended):
 - node.js
 - 後端工程師
@@ -312,6 +315,164 @@ def normalize_query_token(token: str) -> str:
     return text
 
 
+# Separators common in train search logs (包裝員/作業員, 門市，櫃檯，op).
+_QUERY_SEP_RE = re.compile(r"[/／、,，+＋|｜&＆;；]+")
+# Trailing punctuation noise seen in logs (麵包二手/////).
+_TRAILING_NOISE_RE = re.compile(r"[/\\._\-~…]+$")
+# Full-query decorative wrappers 【爭鮮…】.
+_WRAP_RE = re.compile(r"^[【\[](.+)[】\]]$")
+
+# Job-title suffixes ranked by train-query frequency (longest first).
+# Measured on train searchlog: 人員/助理/作業員/司機 dominate; whitespace
+# splitting alone covers only 2.8% of queries because 97.2% have no spaces.
+_JOB_SUFFIXES = (
+    "護理師",
+    "工程師",
+    "設計師",
+    "作業員",
+    "管理員",
+    "技術員",
+    "包裝員",
+    "服務員",
+    "美容師",
+    "保育員",
+    "工讀生",
+    "人員",
+    "專員",
+    "助理",
+    "司機",
+    "店員",
+    "技師",
+    "經理",
+    "主管",
+    "學徒",
+    "工讀",
+    "廚師",
+    "倉管",
+    "職員",
+    "員工",
+    "老師",
+    "師傅",
+)
+# Too generic as standalone queries — reverse-suffix must stay strict.
+_BROAD_ROLE_WORDS = frozenset({"人員", "員工", "職員", "專員"})
+# High-frequency train standalone roles that are not title suffixes
+# (保全 2,086 / 行政 3,398 / 清潔 431) but appear inside longer queries.
+_STANDALONE_ROLES = (
+    "保全",
+    "行政",
+    "清潔",
+    "會計",
+    "業務",
+    "櫃檯",
+    "包裝",
+    "餐飲",
+    "倉管",
+    "護理",
+)
+_ROLE_WORDS = (frozenset(_JOB_SUFFIXES) | frozenset(_STANDALONE_ROLES)) - _BROAD_ROLE_WORDS
+
+
+@dataclass
+class PreprocessedQuery:
+    """Index-free query expansion prior to skill/occupation resolution."""
+
+    raw: str
+    normalized: str
+    tokens: list[str]
+    steps: list[str] = field(default_factory=list)
+
+
+def preprocess_query(query: str) -> PreprocessedQuery:
+    """
+    Expand a raw searchlog query into resolution candidate tokens.
+
+    Driven by train-split searchlog facts (146k queries):
+      - 97.2% have no whitespace → whitespace split barely helps
+      - 98.3% contain CJK; top terms are short role words (司機, 行政, 作業員)
+      - separators /／、, appear in ~6k queries (包裝員/作業員)
+      - many hits are '<modifier><suffix>' (清潔人員, 小貨車司機, 行政助理)
+
+    This function does NOT touch the graph. It only proposes surface forms for
+    the resolver; OOV still maps to existing nodes or stays unresolved.
+    """
+    steps: list[str] = []
+    normalized = normalize_query_token(query)
+    if not normalized:
+        return PreprocessedQuery(raw=query, normalized="", tokens=[], steps=steps)
+
+    cleaned = _TRAILING_NOISE_RE.sub("", normalized).strip()
+    if cleaned != normalized:
+        steps.append(f"strip_trailing_noise: {normalized!r} → {cleaned!r}")
+        normalized = cleaned
+
+    wrapped = _WRAP_RE.fullmatch(normalized)
+    if wrapped:
+        inner = wrapped.group(1).strip()
+        if inner:
+            steps.append(f"unwrap_decoration: → {inner!r}")
+            normalized = inner
+
+    # Separator split first, then whitespace within each part.
+    raw_parts = _QUERY_SEP_RE.split(normalized)
+    parts = [p.strip() for p in raw_parts if p.strip()]
+    if len(parts) > 1:
+        steps.append(f"sep_split: {parts}")
+    atoms: list[str] = []
+    for part in parts or [normalized]:
+        space_bits = part.split()
+        if len(space_bits) > 1:
+            steps.append(f"space_split: {space_bits}")
+            atoms.extend(space_bits)
+        else:
+            atoms.append(part)
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+
+    def _emit(tok: str, reason: str) -> None:
+        if not tok or tok in seen:
+            return
+        seen.add(tok)
+        tokens.append(tok)
+        if reason:
+            steps.append(reason)
+
+    # Keep the full normalized string as a candidate (multi-skill / full alias).
+    _emit(normalized, "")
+
+    for atom in atoms:
+        _emit(atom, "")
+        stem, suffix = _strip_job_suffix(atom)
+        if suffix:
+            if stem:
+                _emit(stem, f"suffix_strip: {atom!r} → stem {stem!r}")
+            # Role word itself is often the real occupation key (司機, 助理).
+            _emit(suffix, f"suffix_keep: {atom!r} → role {suffix!r}")
+        # Emit known role words embedded in a modifier+role blob (夜班保全).
+        if len(atom) >= 3:
+            for role in sorted(_ROLE_WORDS, key=len, reverse=True):
+                if role != atom and role in atom:
+                    _emit(role, f"role_in_token: {atom!r} → {role!r}")
+                    break
+
+    return PreprocessedQuery(
+        raw=query, normalized=normalized, tokens=tokens, steps=steps
+    )
+
+
+def _strip_job_suffix(token: str) -> tuple[str, str]:
+    """Return (stem, suffix) for the longest matching job-title suffix."""
+    if not token or not re.search(r"[\u4e00-\u9fff]", token):
+        return token, ""
+    for suffix in _JOB_SUFFIXES:
+        if token.endswith(suffix) and len(token) > len(suffix):
+            stem = token[: -len(suffix)].strip()
+            if stem:
+                return stem, suffix
+    return token, ""
+
+
 @dataclass
 class QueryResolution:
     raw_query: str
@@ -324,10 +485,21 @@ class QueryResolution:
 def resolve_query(query: str, index: GraphIndex) -> QueryResolution:
     """
     Resolve a query string into skill/occupation anchors.
-    Strategy: try full query as skill/occ alias first, then split tokens.
+
+    Strategy:
+      1. preprocess (separator split, job-suffix peel) — index-free
+      2. full query exact skill / occupation
+      3. each preprocessed token exact
+      4. substring / reverse-suffix fallback on unresolved tokens
+      5. whole-query substring as last resort
     """
     result = QueryResolution(raw_query=query)
-    normalized = normalize_query_token(query)
+    pre = preprocess_query(query)
+    normalized = pre.normalized
+    if not normalized:
+        return result
+    for step in pre.steps:
+        result.resolution_log.append(f"preprocess: {step}")
 
     # 1. Try full query as skill
     skill_id = _resolve_skill(normalized, index)
@@ -343,18 +515,19 @@ def resolve_query(query: str, index: GraphIndex) -> QueryResolution:
         result.resolution_log.append(f"full_query → {occ_id}")
         return result
 
-    # 3. Split into tokens and resolve each (exact only)
-    tokens = query.strip().split()
+    # 3. Resolve each preprocessed token (exact only). Skip the full string —
+    #    already tried above — so multi-anchor queries can accumulate.
     pending: list[str] = []
-    for token in tokens:
-        norm_tok = normalize_query_token(token)
-        skill = _resolve_skill(norm_tok, index)
+    for token in pre.tokens:
+        if token == normalized:
+            continue
+        skill = _resolve_skill(token, index)
         if skill:
             if skill not in result.resolved_skills:
                 result.resolved_skills.append(skill)
                 result.resolution_log.append(f"token '{token}' → {skill}")
             continue
-        occ = _resolve_occupation(norm_tok, index)
+        occ = _resolve_occupation(token, index)
         if occ:
             if occ not in result.resolved_occupations:
                 result.resolved_occupations.append(occ)
@@ -362,17 +535,15 @@ def resolve_query(query: str, index: GraphIndex) -> QueryResolution:
             continue
         pending.append(token)
 
-    # 4. Substring fallback, only for tokens no exact pass could resolve.
-    #    Kept last so it cannot short-circuit multi-anchor queries.
+    # 4. Substring / reverse-suffix fallback for tokens exact pass missed.
     for token in pending:
-        norm_tok = normalize_query_token(token)
-        skill = _resolve_skill(norm_tok, index, allow_substring=True)
+        skill = _resolve_skill(token, index, allow_substring=True)
         if skill:
             if skill not in result.resolved_skills:
                 result.resolved_skills.append(skill)
                 result.resolution_log.append(f"token '{token}' ~substring→ {skill}")
             continue
-        occ = _resolve_occupation(norm_tok, index, allow_substring=True)
+        occ = _resolve_occupation(token, index, allow_substring=True)
         if occ:
             if occ not in result.resolved_occupations:
                 result.resolved_occupations.append(occ)
@@ -381,7 +552,7 @@ def resolve_query(query: str, index: GraphIndex) -> QueryResolution:
         result.unresolved_terms.append(token)
         result.resolution_log.append(f"token '{token}' → unresolved")
 
-    # 5. Whole-query substring as the very last resort (nothing else matched).
+    # 5. Whole-query substring / reverse-suffix as the very last resort.
     if not result.resolved_skills and not result.resolved_occupations:
         skill_id = _resolve_skill(normalized, index, allow_substring=True)
         if skill_id:
@@ -466,6 +637,63 @@ def _resolve_skill(
     return None
 
 
+def _pick_occupation_from_candidates(
+    candidates: list[str], index: GraphIndex
+) -> str | None:
+    """
+    Collapse multiple occupation IDs to one anchor.
+
+    Prefer a shared middle (4-digit) parent, then major (2-digit), else the
+    candidate with the most jobs. Used for ambiguous aliases, prefix fan-out,
+    and reverse-suffix fan-out (司機 → many *司機 aliases).
+    """
+    if not candidates:
+        return None
+    uniq = list(dict.fromkeys(candidates))
+    if len(uniq) == 1:
+        only = uniq[0]
+        code = only.replace("occ:", "")
+        if code in index.occ_to_jobs or code in index.core_skills:
+            return only
+        return None
+
+    codes = [c.replace("occ:", "") for c in uniq]
+    parents = {c[:4] + "00" for c in codes if len(c) >= 4}
+    if len(parents) == 1:
+        parent_code = parents.pop()
+        if parent_code in index.occ_to_jobs or parent_code in index.core_skills:
+            return f"occ:{parent_code}"
+
+    major_parents = {c[:2] + "0000" for c in codes if len(c) >= 2}
+    if len(major_parents) == 1:
+        major_code = major_parents.pop()
+        if major_code in index.occ_to_jobs or major_code in index.core_skills:
+            return f"occ:{major_code}"
+
+    parent_job_counts: dict[str, int] = {}
+    for c in codes:
+        if len(c) < 4:
+            continue
+        p = c[:4] + "00"
+        parent_job_counts[p] = parent_job_counts.get(p, 0) + len(
+            index.occ_to_jobs.get(c, [])
+        )
+    if parent_job_counts:
+        best_parent = max(parent_job_counts, key=parent_job_counts.get)
+        if best_parent in index.occ_to_jobs or best_parent in index.core_skills:
+            return f"occ:{best_parent}"
+
+    best = None
+    best_count = -1
+    for c in uniq:
+        code = c.replace("occ:", "")
+        count = len(index.occ_to_jobs.get(code, []))
+        if count > best_count:
+            best = c
+            best_count = count
+    return best
+
+
 def _resolve_occupation(
     normalized: str, index: GraphIndex, *, allow_substring: bool = False
 ) -> str | None:
@@ -479,32 +707,11 @@ def _resolve_occupation(
     # Ambiguous alias: resolve to parent (middle) that covers all candidates
     # This is the conservative strategy per Playbook: don't silently pick one
     if normalized in index.occ_alias_ambiguous:
-        candidates = index.occ_alias_ambiguous[normalized]
-        # Find common parent: all candidates share at least a middle-level parent
-        codes = [c.replace("occ:", "") for c in candidates]
-        # Try middle parent (first 4 digits + "00")
-        parents = set(c[:4] + "00" for c in codes)
-        if len(parents) == 1:
-            parent_code = parents.pop()
-            if parent_code in index.occ_to_jobs or parent_code in index.core_skills:
-                return f"occ:{parent_code}"
-        # Try major parent (first 2 digits + "0000")
-        major_parents = set(c[:2] + "0000" for c in codes)
-        if len(major_parents) == 1:
-            major_code = major_parents.pop()
-            if major_code in index.occ_to_jobs or major_code in index.core_skills:
-                return f"occ:{major_code}"
-        # Fallback: use the candidate with most jobs
-        best = None
-        best_count = 0
-        for c in candidates:
-            code = c.replace("occ:", "")
-            count = len(index.occ_to_jobs.get(code, []))
-            if count > best_count:
-                best = c
-                best_count = count
-        if best:
-            return best
+        picked = _pick_occupation_from_candidates(
+            index.occ_alias_ambiguous[normalized], index
+        )
+        if picked:
+            return picked
 
     # Prefix fallback: find alias keys that start with the query token
     # (e.g. "會計" matches "會計人員", "會計師" etc.)
@@ -517,22 +724,31 @@ def _resolve_occupation(
             if alias_key.startswith(normalized):
                 prefix_matches.extend(index.occ_alias_ambiguous[alias_key])
         if prefix_matches:
-            codes = list(set(c.replace("occ:", "") for c in prefix_matches))
-            # Try common middle parent
-            parents = set(c[:4] + "00" for c in codes)
-            if len(parents) == 1:
-                parent_code = parents.pop()
-                if parent_code in index.occ_to_jobs or parent_code in index.core_skills:
-                    return f"occ:{parent_code}"
-            # Multiple parents: pick the middle parent with most jobs
-            parent_job_counts = {}
-            for c in codes:
-                p = c[:4] + "00"
-                parent_job_counts[p] = parent_job_counts.get(p, 0) + len(index.occ_to_jobs.get(c, []))
-            if parent_job_counts:
-                best_parent = max(parent_job_counts, key=parent_job_counts.get)
-                if best_parent in index.occ_to_jobs or best_parent in index.core_skills:
-                    return f"occ:{best_parent}"
+            picked = _pick_occupation_from_candidates(prefix_matches, index)
+            if picked:
+                return picked
+
+    # Reverse-suffix: query is a short role word that many aliases END with.
+    # Train-top term 「司機」(3,060) is not itself an alias_key, but 31 aliases
+    # end with 司機 and 29/31 share middle parent 180200. Prefix match cannot
+    # find these. Require a dominant parent so broad suffixes like 「人員」
+    # (1,257 aliases across many middles) stay unresolved rather than wrong.
+    if 2 <= len(normalized) <= 6 and _CJK_ONLY_RE.fullmatch(normalized):
+        ending_matches: list[str] = []
+        for alias_key, canonical in index.occ_alias.items():
+            if alias_key != normalized and alias_key.endswith(normalized):
+                ending_matches.append(canonical)
+        for alias_key, cans in index.occ_alias_ambiguous.items():
+            if alias_key != normalized and alias_key.endswith(normalized):
+                ending_matches.extend(cans)
+        # Known role words from train (作業員, 助理, …) may span several middles;
+        # use job-weighted parent pick. Broad words (人員) stay on dominant gate.
+        if normalized in _ROLE_WORDS:
+            picked = _pick_occupation_from_candidates(ending_matches, index)
+        else:
+            picked = _pick_dominant_occupation(ending_matches, index)
+        if picked:
+            return picked
 
     if not allow_substring:
         return None
@@ -545,6 +761,43 @@ def _resolve_occupation(
         if _substring_hit(term, normalized):
             return occ_id
 
+    return None
+
+
+def _pick_dominant_occupation(
+    candidates: list[str], index: GraphIndex, *, min_share: float = 0.6
+) -> str | None:
+    """Like _pick_occupation_from_candidates but requires a dominant parent."""
+    if not candidates:
+        return None
+    codes = [c.replace("occ:", "") for c in dict.fromkeys(candidates)]
+    if len(codes) == 1:
+        code = codes[0]
+        if code in index.occ_to_jobs or code in index.core_skills:
+            return f"occ:{code}"
+        return None
+
+    middle_counts: Counter[str] = Counter()
+    for c in codes:
+        if len(c) >= 4:
+            middle_counts[c[:4] + "00"] += 1
+    if middle_counts:
+        parent, n = middle_counts.most_common(1)[0]
+        if n / len(codes) >= min_share and (
+            parent in index.occ_to_jobs or parent in index.core_skills
+        ):
+            return f"occ:{parent}"
+
+    major_counts: Counter[str] = Counter()
+    for c in codes:
+        if len(c) >= 2:
+            major_counts[c[:2] + "0000"] += 1
+    if major_counts:
+        parent, n = major_counts.most_common(1)[0]
+        if n / len(codes) >= max(min_share, 0.75) and (
+            parent in index.occ_to_jobs or parent in index.core_skills
+        ):
+            return f"occ:{parent}"
     return None
 
 
@@ -853,10 +1106,13 @@ def _load_eval_labels(split: str, limit: int | None = None) -> tuple[Any, Any]:
 
     con = _duckdb.connect(":memory:")
     try:
+        # ORDER BY keeps --eval-limit samples stable across runs (DuckDB
+        # otherwise may return an arbitrary 2000-row subset).
         queries_sql = f"""
             SELECT query_id, query, query_time
             FROM read_parquet('{queries_path.resolve().as_posix()}')
             WHERE data_split = '{split}'
+            ORDER BY query_id
         """
         if limit:
             queries_sql += f" LIMIT {limit}"
