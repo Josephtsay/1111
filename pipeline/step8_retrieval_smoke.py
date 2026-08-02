@@ -27,13 +27,20 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-GRAPH_DIR = Path(__file__).parent / "graph"
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
+GRAPH_DIR = _REPO_ROOT / "graph"
+
+# run_evaluation() 需要 job_skill_graph.metrics 的 ndcg/mrr/hit；
+# 這個 package 在 repo 根目錄，不是 pipeline/ 的 sibling，所以要把根目錄加進 sys.path。
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -834,8 +841,8 @@ def _load_eval_labels(split: str, limit: int | None = None) -> tuple[Any, Any]:
     """
     import duckdb as _duckdb
 
-    dataset_dir = Path(__file__).parent / "data" / "raw"
-    output_dir = Path(__file__).parent / "graph" / "eval_dataset"
+    dataset_dir = _REPO_ROOT / "data" / "raw"
+    output_dir = _REPO_ROOT / "graph" / "eval_dataset"
 
     # Check if prepared artifacts exist; if not, prepare them
     labels_path = output_dir / "labels.parquet"
@@ -1156,7 +1163,12 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
     an existing exposure list.
     """
     import pandas as pd
-    from metrics import ndcg_at_k, reciprocal_rank, hit_at_k, evaluate_rankings
+    from job_skill_graph.metrics import (
+        ndcg_at_k,
+        reciprocal_rank,
+        hit_at_k,
+        evaluate_rankings,
+    )
 
     print("\n" + "=" * 60)
     print("EVALUATION HARNESS (full retrieval)")

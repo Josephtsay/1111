@@ -2,11 +2,11 @@
 # A 維護；Gate 1 bake-off 填入指標，Gate 2 freeze chosen / fallback。
 #
 # 重現方式：
-#   1. python step1_train_data_prep.py            # graph/golden_slice_ids.json
-#   2. python step_a0_llm_bakeoff_prep.py         # 打包 golden prompts（不呼叫 API）
-#   3. python step_a0b_llm_bakeoff_run.py --mode mock        # 零成本驗證評分管線
-#      python step_a0b_llm_bakeoff_run.py --mode dry-run     # token / 成本預估
-#      python step_a0b_llm_bakeoff_run.py --mode live --limit 25 \
+#   1. python pipeline/step1_train_data_prep.py            # graph/golden_slice_ids.json
+#   2. python pipeline/step_a0_llm_bakeoff_prep.py         # 打包 golden prompts（不呼叫 API）
+#   3. python pipeline/step_a0b_llm_bakeoff_run.py --mode mock     # 零成本驗證評分管線
+#      python pipeline/step_a0b_llm_bakeoff_run.py --mode dry-run  # token / 成本預估
+#      python pipeline/step_a0b_llm_bakeoff_run.py --mode live --limit 25 \
 #        --candidates cand_haiku45=us.anthropic.claude-haiku-4-5-20251001-v1:0,...
 #   4. 指標來源：graph/llm_bakeoff_v0.1/bakeoff_summary_live.json
 #

@@ -32,7 +32,7 @@ from pathlib import Path
 
 import step3_canonicalization as s3
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
 GRAPH_DIR = ROOT / "graph"
 FIXTURES_DIR = ROOT / "fixtures"
 

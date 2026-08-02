@@ -62,7 +62,7 @@ def main() -> int:
             "重跑 Step 3 會重新產生 registry_key（47e543d 之後有 296 個 ID 會變："
             "skill 40 + credential 256）。必須連帶重跑 step_a6 與 Step 4→8，"
             "否則舊 edges 指向已不存在的 key，Step 7 dangling edge 檢查會 FAIL。"
-            "可先跑 `python step_a7b_key_change_impact.py` 確認影響範圍。"
+            "可先跑 `python pipeline/step_a7b_key_change_impact.py` 確認影響範圍。"
         )
 
     if LIVE_LLM.search(cmd):
@@ -74,7 +74,7 @@ def main() -> int:
     notes.append(
         "完成後不要只看 exit code。要驗：manifest 的 row count 與 artifact hash 是否更新、"
         "有無重複 node/edge ID、有無 dangling edge、test 期行為資料未流入圖，"
-        "並以 step7_quality_gate.py 的結果為準（無 FAIL 才算過）。"
+        "並以 pipeline/step7_quality_gate.py 的結果為準（無 FAIL 才算過）。"
     )
 
     print("[pipeline-guard]")

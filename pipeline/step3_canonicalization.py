@@ -45,7 +45,8 @@ from typing import Any, Iterator
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-GRAPH_DIR = Path(__file__).parent / "graph"
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
+GRAPH_DIR = _REPO_ROOT / "graph"
 EXTRACTIONS_STRUCTURED = GRAPH_DIR / "extractions_structured.jsonl"
 EXTRACTIONS_PHRASE = GRAPH_DIR / "extractions_phrase.jsonl"
 
@@ -57,7 +58,7 @@ OUTPUT_AUDIT = GRAPH_DIR / "canonicalization_audit.csv"
 OUTPUT_MANIFEST = GRAPH_DIR / "canonicalization_manifest.json"
 
 DICTIONARY_VERSION = "v0.1"
-ALIAS_SEED_CSV = Path(__file__).parent / "fixtures" / "skill_alias_seed_v0.1.csv"
+ALIAS_SEED_CSV = _REPO_ROOT / "fixtures" / "skill_alias_seed_v0.1.csv"
 
 # 允許的極短 registry key（語意上成立的單字／符號技能）
 SHORT_KEY_ALLOWLIST = frozenset({

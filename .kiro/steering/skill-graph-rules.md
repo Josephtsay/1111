@@ -25,7 +25,7 @@ inclusion: auto
 ## 硬性約束
 
 1. **建圖資料範圍:** 全部職缺皆可用於建圖，不需切分 train/test（主辦方口頭確認，書面來源待補 §1.1）
-2. query/行為資料仍依 `dataset_1111.py` 切分 train/validation/test；test 期查詢/行為不得回寫圖
+2. query/行為資料仍依 `job_skill_graph/dataset_1111.py` 切分 train/validation/test；test 期查詢/行為不得回寫圖
 3. ID 必須 deterministic：
    - `job:<職缺編號>` → `job:1370179`
    - `skill:<registry_key>` → `skill:python`

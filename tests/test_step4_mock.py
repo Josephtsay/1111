@@ -5,10 +5,15 @@ Creates a small extractions.jsonl and verifies correct edge assembly.
 
 import json
 import csv
+import sys
 import tempfile
 from pathlib import Path
 
-from step4_edge_assembler import EdgeAssembler, validate_extraction
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT / "pipeline") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "pipeline"))
+
+from step4_edge_assembler import EdgeAssembler, validate_extraction  # noqa: E402
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Mock data: 3 jobs with various edge cases
@@ -165,8 +170,8 @@ def test_edge_assembly():
     try:
         assembler = EdgeAssembler(
             extractions_path=mock_path,
-            train_jobs_path=Path(__file__).parent / "graph" / "train_jobs.parquet",
-            hierarchy_path=Path(__file__).parent / "graph" / "occupation_hierarchy.csv",
+            train_jobs_path=REPO_ROOT / "graph" / "train_jobs.parquet",
+            hierarchy_path=REPO_ROOT / "graph" / "occupation_hierarchy.csv",
         )
         assembler.run()
 

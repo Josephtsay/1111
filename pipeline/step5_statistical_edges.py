@@ -34,7 +34,8 @@ import duckdb
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-GRAPH_DIR = Path(__file__).parent / "graph"
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
+GRAPH_DIR = _REPO_ROOT / "graph"
 
 # Default thresholds (Playbook §Step 5: "count>=5, NPMI>=0.1, top-N TBD")
 DEFAULT_CO_OCCURS_MIN_COUNT = 5
@@ -598,7 +599,7 @@ def load_soft_skill_blacklist(
     silently apply no blacklist at all.
     """
     if path is None:
-        fixtures = Path(__file__).parent / "fixtures"
+        fixtures = _REPO_ROOT / "fixtures"
         versioned = sorted(fixtures.glob("soft_skill_blacklist_v*.csv"))
         if not versioned:
             return set()

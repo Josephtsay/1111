@@ -62,15 +62,15 @@ CASES: list[tuple[str, Path, dict, int, bool]] = [
     ("grep for the phrase",         GIT, bash('grep -r "g' + 'it commit" docs/'), ALLOW, False),
 
     ("doc write is free",           SCHEMA, write("docs/SKILL_GRAPH_STEP9_SECTION_A.md"), ALLOW, False),
-    ("analysis script is free",     SCHEMA, write("step_a7_data_composition.py"), ALLOW, False),
-    ("step3 needs confirm",         SCHEMA, write("step3_canonicalization.py"), ALLOW, True),
+    ("analysis script is free",     SCHEMA, write("pipeline/step_a7_data_composition.py"), ALLOW, False),
+    ("step3 needs confirm",         SCHEMA, write("pipeline/step3_canonicalization.py"), ALLOW, True),
     ("model_registry needs confirm", SCHEMA, write("configs/model_registry.yaml"), ALLOW, True),
-    ("step_a6 needs confirm",       SCHEMA, write("step_a6_skill_classification.py"), ALLOW, True),
+    ("step_a6 needs confirm",       SCHEMA, write("pipeline/step_a6_skill_classification.py"), ALLOW, True),
 
-    ("light script is free",        PIPELINE, bash("python step_a7b_key_change_impact.py"), ALLOW, False),
-    ("heavy in foreground warns",   PIPELINE, bash("python step4_edge_assembler.py"), ALLOW, True),
-    ("heavy in background ok",      PIPELINE, bash("python step4_edge_assembler.py", True), ALLOW, True),
-    ("step3 rerun warns",           PIPELINE, bash("python step3_canonicalization.py", True), ALLOW, True),
+    ("light script is free",        PIPELINE, bash("python pipeline/step_a7b_key_change_impact.py"), ALLOW, False),
+    ("heavy in foreground warns",   PIPELINE, bash("python pipeline/step4_edge_assembler.py"), ALLOW, True),
+    ("heavy in background ok",      PIPELINE, bash("python pipeline/step4_edge_assembler.py", True), ALLOW, True),
+    ("step3 rerun warns",           PIPELINE, bash("python pipeline/step3_canonicalization.py", True), ALLOW, True),
 ]
 
 
@@ -90,7 +90,7 @@ def main() -> int:
                 print(f"           stderr: {err.splitlines()[0][:100]}")
 
     # schema guard must emit a valid "ask" decision
-    code, out, _ = run(SCHEMA, write("step3_canonicalization.py"))
+    code, out, _ = run(SCHEMA, write("pipeline/step3_canonicalization.py"))
     try:
         decision = json.loads(out)["hookSpecificOutput"]["permissionDecision"]
         if decision != "ask":

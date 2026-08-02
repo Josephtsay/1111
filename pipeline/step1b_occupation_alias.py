@@ -35,8 +35,9 @@ from typing import Any
 # Config
 # ─────────────────────────────────────────────────────────────────────────────
 
-RAW_DIR = Path(__file__).parent / "data" / "raw"
-OUTPUT_DIR = Path(__file__).parent / "graph"
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
+RAW_DIR = _REPO_ROOT / "data" / "raw"
+OUTPUT_DIR = _REPO_ROOT / "graph"
 DUTIES_CSV = RAW_DIR / "職務對照表.csv"
 
 DICTIONARY_VERSION = "v0.1"

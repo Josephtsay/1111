@@ -37,7 +37,8 @@ import duckdb
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-GRAPH_DIR = Path(__file__).parent / "graph"
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
+GRAPH_DIR = _REPO_ROOT / "graph"
 TRAIN_JOBS_PARQUET = GRAPH_DIR / "train_jobs.parquet"
 HIERARCHY_CSV = GRAPH_DIR / "occupation_hierarchy.csv"
 

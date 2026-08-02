@@ -14,7 +14,7 @@ r1 方向正確，但有兩個會讓交付出問題的地方：
 | # | r1 的問題 | 實測依據 | r2 的修正 |
 |---|-----------|----------|-----------|
 | 1 | **分類的 ablation 會是空的**。`skill_kind` 沒有任何下游消費者——只有 step3 寫死 `technical`、`step6:113` 搬進 `nodes.csv`；step5／step8 都不讀它。「開／關分類」會得到完全相同的檢索結果，LLM 又變成裝飾（playbook 陷阱 #12） | 全 repo grep `skill_kind` 僅 3 處，全為寫入或搬運 | **分類必須接到既有唯一消費點**：`skill_kind ∈ {soft, non_skill}` → 過統計守衛 → 併入 `soft_skill_blacklist_v0.3.csv` → step5 已會吃最新版 → 影響 CO_OCCURS／CORE_SKILL／global DF → step8 才會真的變。已實作於 `step_a6` |
-| 2 | **ablation matrix 被低估**。step8 是 smoke test（只有命中數與 latency），沒有 relevance label、沒有 B0 baseline；`feature_flags` 在 `step6:321`／`step8:563` 是**寫死的字面值**，不是開關 | `metrics.py` 已有 `ndcg_at_k`／`mrr`／`hit_at_k`，但 step8 完全沒引用 | 升為 **Phase 2（B 主線）**，優先於對照表擴詞。時間不足時**砍擴詞、保 harness** |
+| 2 | **ablation matrix 被低估**。step8 是 smoke test（只有命中數與 latency），沒有 relevance label、沒有 B0 baseline；`feature_flags` 在 `step6:321`／`step8:563` 是**寫死的字面值**，不是開關 | `job_skill_graph/metrics.py` 已有 `ndcg_at_k`／`mrr`／`hit_at_k`，但 step8 完全沒引用 | 升為 **Phase 2（B 主線）**，優先於對照表擴詞。時間不足時**砍擴詞、保 harness** |
 | 3 | 把「分類 vs blacklist 衝突」當例外處理 | 兩份 soft 定義會長期分歧 | 改為**單一來源**：分類產生清單，A5 統計訊號當守衛層 |
 | 4 | 未處理 `dictionary_version` 升版一致性 | `extractions.jsonl` 每個 mention 內嵌 `dictionary_version: v0.1` | **不升 `dictionary_version`**；分類版本另存 `skill_kind_version` / `skill_kind_source` / `skill_kind_confidence`（step6 依欄名讀，多欄位無影響） |
 | 5 | 「用 bake-off 選分類模型」 | Gate 1 量的是**抽取**任務（strict JSON／grounding／offset／assertion），不可轉用 | 分類需自己的人工評測集（`--make-eval-set`，1,437 抽 100 筆分層） |
@@ -32,11 +32,11 @@ r1 方向正確，但有兩個會讓交付出問題的地方：
 | 檔案 | 內容 |
 |------|------|
 | `fixtures/soft_skill_blacklist_v0.2.csv` | 全量 121.8 萬職缺統計導出；封鎖 1 筆（`skill:具備溝通協調能力`，DF 1,040、跨 20 大類） |
-| `step_a5_soft_skill_blacklist.py` | dual-signal（詞彙 + DF／熵／salience）；Excel/Word/PPT/Outlook 列 `retained_downweight` 不封鎖 |
-| `llm_client.py` | Bedrock Converse（botocore SigV4；此環境無 boto3） |
-| `step_a0b_llm_bakeoff_run.py` | bake-off：mock／dry-run／live／rescore |
+| `pipeline/step_a5_soft_skill_blacklist.py` | dual-signal（詞彙 + DF／熵／salience）；Excel/Word/PPT/Outlook 列 `retained_downweight` 不封鎖 |
+| `pipeline/llm_client.py` | Bedrock Converse（botocore SigV4；此環境無 boto3） |
+| `pipeline/step_a0b_llm_bakeoff_run.py` | bake-off：mock／dry-run／live／rescore |
 | `configs/model_registry.yaml` | Gate 1 實測；`frozen: false`；flags 全 false |
-| `step5_statistical_edges.py` | loader 預設吃最新 `soft_skill_blacklist_v*.csv`（**需 B ack**） |
+| `pipeline/step5_statistical_edges.py` | loader 預設吃最新 `soft_skill_blacklist_v*.csv`（**需 B ack**） |
 
 Gate 1 實測（25 筆 golden × 4 模型）的 4 個 blocking issues 已記在 registry：
 `strict_json=0`（prompt 沒禁 code fence）、`offset_exact ≤ 0.05`（模型 offset 不可用）、
@@ -47,12 +47,12 @@ Gate 1 實測（25 筆 golden × 4 模型）的 4 個 blocking issues 已記在 
 | 檔案 | 狀態 |
 |------|------|
 | `prompts/llm_skill_classification_v0.1.txt` | 分類 prompt；已明確禁止 code fence |
-| `step_a6_skill_classification.py` | 分類腳本；80 筆試跑 100% 正常；全量執行中 |
+| `pipeline/step_a6_skill_classification.py` | 分類腳本；80 筆試跑 100% 正常；全量執行中 |
 
 ### 1.3 B 已完成（遠端 `a28646b`）
 
-`step4_edge_assembler.py`、`step5_statistical_edges.py`、`step6_graph_export.py`、
-`step7_quality_gate.py`、`step8_retrieval_smoke.py`；CORE_SKILL boost redesign、edge dedup、csv import 修復、perf。
+`pipeline/step4_edge_assembler.py`、`pipeline/step5_statistical_edges.py`、`pipeline/step6_graph_export.py`、
+`pipeline/step7_quality_gate.py`、`pipeline/step8_retrieval_smoke.py`；CORE_SKILL boost redesign、edge dedup、csv import 修復、perf。
 
 ### 1.4 資料流與介面凍結點
 
@@ -131,9 +131,9 @@ r2 最重要的調整。目前無法產出 playbook §Step 9 要求的 NDCG／MR
 |----|------|--------|------|-----------|
 | P2.1 | pull `e68c347` + A 分類 commit，重跑 Step5 → 6 | **B** | blacklist v0.3 | CORE_SKILL／nodes 反映 v0.3 與 `skill_kind` |
 | P2.2 | `feature_flags` 由寫死改為 CLI／config 參數 | **B** | `step6:321`、`step8:563` | 可 `--no-graph`、`--blacklist <path>` 切換 |
-| P2.3 | 接 `metrics.py` 到 step8：用 `dataset_1111.py` 切分，以瀏覽／應徵當 relevance label | **B** | `metrics.py` 已有 ndcg／mrr／hit | 產出 NDCG@10／MRR／Hit@1／Hit@10 |
+| P2.3 | 接 `job_skill_graph/metrics.py` 到 step8：用 `job_skill_graph/dataset_1111.py` 切分，以瀏覽／應徵當 relevance label | **B** | `job_skill_graph/metrics.py` 已有 ndcg／mrr／hit | 產出 NDCG@10／MRR／Hit@1／Hit@10 |
 | P2.4 | B0 baseline（無圖，BM25 或既有檢索） | **B** | — | 有對照組數字 |
-| P2.5 | Step7 quality gate 跑過 | **B 執行、A 複核內容** | `step7_quality_gate.py` | 無 fail |
+| P2.5 | Step7 quality gate 跑過 | **B 執行、A 複核內容** | `pipeline/step7_quality_gate.py` | 無 fail |
 
 **安全紅線（playbook §10 #1）**：test 期 query／點擊／應徵**只能當評測 label**，不得回寫節點、邊、alias、registry 或統計量。
 
@@ -227,11 +227,11 @@ B 回報給 A：
 |------|------|
 | `docs/SKILL_GRAPH_PLAYBOOK.md` | 權威 schema／步驟／Gate |
 | `docs/SKILL_GRAPH_NEXT_PLAN.md` | 本文件 |
-| `step_a5_soft_skill_blacklist.py` / `step_a6_skill_classification.py` | A 的 blacklist 與分類 |
+| `pipeline/step_a5_soft_skill_blacklist.py` / `pipeline/step_a6_skill_classification.py` | A 的 blacklist 與分類 |
 | `fixtures/soft_skill_blacklist_v*.csv` | Step5 過濾（自動取最新版） |
 | `fixtures/skill_kind_eval_set_v0.1.csv` | 分類人工評測集 |
 | `configs/model_registry.yaml` | 模型與 flag 狀態 |
-| `metrics.py` | 已有 ndcg／mrr／hit，待接進 step8 |
+| `job_skill_graph/metrics.py` | 已有 ndcg／mrr／hit，待接進 step8 |
 
 ---
 

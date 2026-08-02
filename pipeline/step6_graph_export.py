@@ -39,7 +39,8 @@ import duckdb
 
 from step3_canonicalization import sanitize_registry_key
 
-GRAPH_DIR = Path(__file__).parent / "graph"
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
+GRAPH_DIR = _REPO_ROOT / "graph"
 
 
 @dataclass(frozen=True)
@@ -235,7 +236,7 @@ def build_nodes(graph_dir: Path) -> Path:
                             occ_codes[code] = {"parent_code": parent}
 
                 # Get names from duties table (via train_jobs or raw)
-                duties_csv = Path(__file__).parent / "data" / "raw" / "職務對照表.csv"
+                duties_csv = _REPO_ROOT / "data" / "raw" / "職務對照表.csv"
                 if duties_csv.exists():
                     duty_rows = con.execute(f"""
                         SELECT

@@ -59,7 +59,7 @@ from typing import Any
 import llm_client
 from step_a0b_llm_bakeoff_run import parse_strict_json
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
 GRAPH_DIR = ROOT / "graph"
 FIXTURES_DIR = ROOT / "fixtures"
 

@@ -29,7 +29,7 @@ Skill Graph 是本命題的核心資產：把職缺文字中的技能抽成結�
 
 - 創意必須形成「創新假設 → feature flag → ablation → 指標差異 → traversal trace」的可驗證鏈條，不能只增加 edge type 或展示頁
 - LLM 不得只憑模型常識直接寫入正式圖；新關係必須同時有職缺語料佐證、evidence、版本與 verifier 結果
-- 職缺資料全量可用於建圖，但 query／使用者行為的 test 切分（見 `dataset_1111.py`）仍然存在：test 期查詢、點擊、應徵行為不得回寫節點、邊、alias、registry 或統計量；OOV query 只能在查詢期間對既有節點做保守解析或 fallback
+- 職缺資料全量可用於建圖，但 query／使用者行為的 test 切分（見 `job_skill_graph/dataset_1111.py`）仍然存在：test 期查詢、點擊、應徵行為不得回寫節點、邊、alias、registry 或統計量；OOV query 只能在查詢期間對既有節點做保守解析或 fallback
 - 安全閘門優先於創意功能：任何新設計若提高 leakage、誤連或不可解釋風險，預設關閉或留在 candidate / quarantine，不為創意分犧牲穩定性
 
 ### 1.1 權威資料來源與衝突處理
@@ -43,7 +43,7 @@ Skill Graph 是本命題的核心資產：把職缺文字中的技能抽成結�
 
 已知文件差異：命題文件預告 JD 含「上架時間戳」，但實際 `職缺.csv` 與工作坊簡報僅提供 `職缺最後修改時間`；工作坊簡報也未列出明確 train/test cutoff。故本文件不得虛構 `posted_at` 或自行指定 cutoff，需在 manifest 中記錄依據與限制。
 
-已知文件差異（2026-08-01 更新）：命題文件書面規定「圖譜僅能使用 train 期內之職缺資料建構，不得使用 test 期間之 JD（違者該指標項不計分）」；經向主辦方確認，**全部職缺資料皆可用於建圖，不需切分 train/test**，取代此條款。此更新目前只有口頭確認，尚未附上可查證來源；建議補上工作坊 Q&A 記錄或 email 回覆連結（欄位待補：______），並在最終交付的 `graph_manifest.json` 與 README 中一併說明依據，避免評審對這條有罰則的規定提出質疑時拿不出根據。此決策僅涉及**職缺（JD）資料**；`userSearchLog` 查詢與行為紀錄的 train/validation/test 切分（見 `dataset_1111.py`）不受影響，仍需維持。
+已知文件差異（2026-08-01 更新）：命題文件書面規定「圖譜僅能使用 train 期內之職缺資料建構，不得使用 test 期間之 JD（違者該指標項不計分）」；經向主辦方確認，**全部職缺資料皆可用於建圖，不需切分 train/test**，取代此條款。此更新目前只有口頭確認，尚未附上可查證來源；建議補上工作坊 Q&A 記錄或 email 回覆連結（欄位待補：______），並在最終交付的 `graph_manifest.json` 與 README 中一併說明依據，避免評審對這條有罰則的規定提出質疑時拿不出根據。此決策僅涉及**職缺（JD）資料**；`userSearchLog` 查詢與行為紀錄的 train/validation/test 切分（見 `job_skill_graph/dataset_1111.py`）不受影響，仍需維持。
 
 ---
 
@@ -75,7 +75,7 @@ Schema 是兩人共用的合約。若未先對齊就分頭實作，常見後果�
 |--------|------|
 | Schema v0.1 | Node / Edge / 屬性 / ID 規則 |
 | 抽取 JSON 契約 | A 交給 B 的唯一格式 |
-| 建圖資料範圍 | 已確認全部職缺資料可用，不需切分；query/行為資料仍依 `dataset_1111.py` 切 train/validation/test |
+| 建圖資料範圍 | 已確認全部職缺資料可用，不需切分；query/行為資料仍依 `job_skill_graph/dataset_1111.py` 切 train/validation/test |
 | 品質政策 | fail / quarantine / warn |
 | Innovation Contract | H1 / H2、feature flags、安全邊界、評估矩陣 |
 | Golden slice | 固定 100–1,000 Job IDs、預期 artifact hash 與 contract test |
@@ -1090,7 +1090,7 @@ API 層不需要知道圖內部細節；只要最終能對 `query` / `location_c
 | 問題 | 答案 |
 |------|------|
 | Schema 狀態？ | **v0.1 已凍結；Gate 0=`conditional_pass`；建圖資料範圍已確認為全量、不需切分（來源待補）** |
-| 主要用什麼資料？ | 全部 `職缺.csv`（1,218,635 筆）+ `職務對照表`；query／行為資料仍依 `dataset_1111.py` 切 train/validation/test |
+| 主要用什麼資料？ | 全部 `職缺.csv`（1,218,635 筆）+ `職務對照表`；query／行為資料仍依 `job_skill_graph/dataset_1111.py` 切 train/validation/test |
 | 步驟？ | Schema → 全量職缺 → 抽取 → 正規化 → 組邊 → 統計邊 → 匯出 → 品質 → smoke → 文件 |
 | Schema 核心？ | Job / Skill / Occupation / Credential；HAS_SKILL / IN_OCCUPATION / SUBCATEGORY_OF / REQUIRES_CREDENTIAL |
 | 創意主軸？ | Evidence-Calibrated, Query-Adaptive Skill Graph；LLM 關係需職缺語料 evidence + verifier，查詢採最小必要 traversal |

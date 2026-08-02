@@ -47,7 +47,7 @@ top 3,000 query（163,286 實例）只有 **0.1%** 解析到 skill 錨點、49.6
 1. **`graph/` 不進 git** —— 見上。最常犯的誤判。
 2. **重跑 Step 3 會改 296 個 registry ID**（skill 40 + credential 256，`47e543d` 之後）。
    必須連帶重跑 `step_a6` 與 Step 4→8，否則 Step 7 dangling edge 會 FAIL。
-   先跑 `python step_a7b_key_change_impact.py` 確認。
+   先跑 `python pipeline/step_a7b_key_change_impact.py` 確認。
 3. **`fixtures/skill_alias_seed_v0.1.csv` 存的是正規化後的舊格式 target**（如 `kubernetes(k8s`）。
    靠 `step3` 比對前 sanitize 才沒斷；少了那一行綁定會從 37 掉到 17，
    `node.js` / `react` / `k8s` 會靜默失去入口。normalize 規則再動就會再踩。
@@ -63,6 +63,25 @@ top 3,000 query（163,286 實例）只有 **0.1%** 解析到 skill 錨點、49.6
    `".env".lstrip("./")` == `"env"`。已在 `step3` 與 `git_guard` 各踩一次。
 10. **全量步驟不要前景跑**（1.22M 筆、279MB parquet、1.1GB extractions）。
     用 `run_in_background=true`，預設 120s timeout 一定不夠。
+11. **`data/raw/` 這個目錄不存在，但有四支腳本指著它**（2026-08-02 整理時發現，**與搬檔無關**）：
+    `pipeline/step1_train_data_prep.py:34`、`pipeline/step1b_occupation_alias.py`、
+    `pipeline/step6_graph_export.py:238`、`pipeline/step8_retrieval_smoke.py:837`。
+    實際資料在 `dataset/`，而 `pipeline/step2a`、`step2b` 指的就是 `dataset/`。
+    證據：`graph/step1_manifest.json` 的 `source_files.jobs_csv.path` 記錄的是
+    `dataset/職缺.csv`，但現在 code 讀 `data/raw/職缺.csv`，且 `JOBS_CSV` 沒有 CLI 覆寫。
+    **代表 step1 現在跑不起來、無法重現自己的 manifest。** 修法是把這四處改成 `dataset/`，
+    但這會動到 step6（凍結範圍），需 A/B 雙人同意，所以先記錄不逕行修改。
+
+## 目錄結構（2026-08-02 整理後）
+
+- `pipeline/` — playbook 建圖 pipeline（step1→9、step_a*、`llm_client.py` 等 22 支）
+- `job_skill_graph/` — Josephtsay 初版上傳的 package；含仍在用的 `metrics.py`／`location_mask.py`
+  與已被取代的初版建圖模組，逐檔對照見 `job_skill_graph/README.md`
+- `tests/` — mock 測試
+- **腳本一律從 repo 根目錄執行**（`python pipeline/stepX.py`）。
+  腳本內用 `Path(__file__).resolve().parent.parent` 錨定根目錄，
+  所以 `graph/`／`dataset/`／`fixtures/`／`prompts/`／`configs/`／`.env` 都還是讀根目錄那份。
+  再搬動 `pipeline/` 的層級就要同步改這行。
 
 ## 尚未完成（會影響評分）
 

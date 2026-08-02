@@ -17,18 +17,18 @@
 
 | 數字群 | 來源 artifact | 重現指令 |
 |--------|---------------|----------|
-| Gate 1 模型比較（4 模型 × 25 筆） | `graph/llm_bakeoff_v0.1/bakeoff_summary_live.json`、`configs/model_registry.yaml` | `python step_a0b_llm_bakeoff_run.py --mode live --limit 25` |
-| 規則式 assertion 偵測器基線 | `graph/assertion_challenge_report.json` | `python step2c_assertion_challenge.py` |
-| 技能分類結果與逐筆稽核 | `graph/skill_classification_audit.csv`、`graph/skill_classification_manifest.json`、`graph/a6_full_run.log`（v0.1 prompt）、`graph/a6_full_run_v2.log`（v0.2 prompt） | `python step_a6_skill_classification.py --mode live` |
+| Gate 1 模型比較（4 模型 × 25 筆） | `graph/llm_bakeoff_v0.1/bakeoff_summary_live.json`、`configs/model_registry.yaml` | `python pipeline/step_a0b_llm_bakeoff_run.py --mode live --limit 25` |
+| 規則式 assertion 偵測器基線 | `graph/assertion_challenge_report.json` | `python pipeline/step2c_assertion_challenge.py` |
+| 技能分類結果與逐筆稽核 | `graph/skill_classification_audit.csv`、`graph/skill_classification_manifest.json`、`graph/a6_full_run.log`（v0.1 prompt）、`graph/a6_full_run_v2.log`（v0.2 prompt） | `python pipeline/step_a6_skill_classification.py --mode live` |
 | 黑名單 | `fixtures/soft_skill_blacklist_v0.2.csv`（規則法）、`v0.3.csv`（LLM + dual-signal） | 同上 |
-| 資料組成揭露比例 | `graph/data_composition_manifest.json` | `python step_a7_data_composition.py` |
-| 抽取覆蓋率 | `graph/extraction_structured_manifest.json`、`graph/extraction_phrase_manifest.json` | `python step2a_structured_extraction.py` / `step2b_phrase_extraction.py` |
-| Ablation 指標 B0 / G1 / G2 | `graph/eval_report_{B0,G1,G2}.json`、`graph/ablation_comparison.json`（**B 機器**；A 本機未產出） | `python step9_ablation.py --ablation` |
-| Step 7 品質閘門 | `graph/graph_quality_report.json`（**B 機器**） | `python step7_quality_gate.py` |
+| 資料組成揭露比例 | `graph/data_composition_manifest.json` | `python pipeline/step_a7_data_composition.py` |
+| 抽取覆蓋率 | `graph/extraction_structured_manifest.json`、`graph/extraction_phrase_manifest.json` | `python pipeline/step2a_structured_extraction.py` / `pipeline/step2b_phrase_extraction.py` |
+| Ablation 指標 B0 / G1 / G2 | `graph/eval_report_{B0,G1,G2}.json`、`graph/ablation_comparison.json`（**B 機器**；A 本機未產出） | `python pipeline/step9_ablation.py --ablation` |
+| Step 7 品質閘門 | `graph/graph_quality_report.json`（**B 機器**） | `python pipeline/step7_quality_gate.py` |
 | registry_key 壞 key 計數 | `graph/skill_dictionary.csv` | `awk -F, 'NR>1 && $1 ~ /[()]/' graph/skill_dictionary.csv` |
-| skill alias 筆數 | `graph/alias_dictionary.csv` | `python step3_canonicalization.py` |
+| skill alias 筆數 | `graph/alias_dictionary.csv` | `python pipeline/step3_canonicalization.py` |
 
-模型憑證由環境變數（`.env`）提供，Provider = AWS Bedrock，Region = `us-west-2`，呼叫介面為 `bedrock-runtime Converse`（`llm_client.py`，botocore SigV4）。憑證未寫入任何 artifact 或 manifest。
+模型憑證由環境變數（`.env`）提供，Provider = AWS Bedrock，Region = `us-west-2`，呼叫介面為 `bedrock-runtime Converse`（`pipeline/llm_client.py`，botocore SigV4）。憑證未寫入任何 artifact 或 manifest。
 
 ---
 
@@ -38,7 +38,7 @@
 
 命題要求 LLM 必須實際參與抽取、正規化、分類或關係判斷之一，且必須可關閉做 ablation，不能只是附加展示。
 
-我們選定的必要角色是 **Step 3 之後的技能分類（`skill_kind`）**，由 `step_a6_skill_classification.py` 執行：LLM 對 `graph/skill_dictionary.csv` 的 1,437 個 Skill 節點指定 `technical` / `tool` / `soft` / `non_skill`。
+我們選定的必要角色是 **Step 3 之後的技能分類（`skill_kind`）**，由 `pipeline/step_a6_skill_classification.py` 執行：LLM 對 `graph/skill_dictionary.csv` 的 1,437 個 Skill 節點指定 `technical` / `tool` / `soft` / `non_skill`。
 
 | 項目 | 值 |
 |------|-----|
@@ -71,10 +71,10 @@ Gate 1 實測吞吐量最高者為 haiku 4.5 的 **365.7 jobs/hour**。以此推
 
 | 位置 | 行為 |
 |------|------|
-| `step3_canonicalization.py:229` | 寫死 `"skill_kind": "technical"` |
-| `step6_graph_export.py:113` | `row.get("skill_kind", "technical")` 搬進 `nodes.csv` |
-| `step2c_assertion_challenge.py:87` | 只讀取，不影響判定 |
-| `step5_statistical_edges.py` / `step8_retrieval_smoke.py` | **完全沒有引用** |
+| `pipeline/step3_canonicalization.py:229` | 寫死 `"skill_kind": "technical"` |
+| `pipeline/step6_graph_export.py:113` | `row.get("skill_kind", "technical")` 搬進 `nodes.csv` |
+| `pipeline/step2c_assertion_challenge.py:87` | 只讀取，不影響判定 |
+| `pipeline/step5_statistical_edges.py` / `pipeline/step8_retrieval_smoke.py` | **完全沒有引用** |
 
 也就是說，若分類只寫進 `nodes.csv`，「開／關 LLM 分類」會得到**完全相同的檢索結果**，LLM 等於裝飾（playbook §10 陷阱 #12）。
 
@@ -314,7 +314,7 @@ v0.2 的 prompt 把判準寫得很緊，等於用 8 個具體反例引導模型�
 | 缺口 | 現況 | 取得方式 |
 |------|------|----------|
 | mention precision / recall | **不可得**。golden slice 無人工 mention 標註，且這 25 筆的 phrase baseline 恰好為 0 mentions（phrase 全量覆蓋率僅 11.79%） | 重新分層 golden slice 納入有 phrase 命中的職缺，或建立人工 mention 標註 |
-| 分類準確率 | **未量化**。`fixtures/skill_kind_eval_set_v0.1.csv` 已產出 100 筆分層樣本，但 `expected_skill_kind` 欄**全部為空**，尚未人工標註 | 人工填答後 `python step_a6_skill_classification.py --eval` |
+| 分類準確率 | **未量化**。`fixtures/skill_kind_eval_set_v0.1.csv` 已產出 100 筆分層樣本，但 `expected_skill_kind` 欄**全部為空**，尚未人工標註 | 人工填答後 `python pipeline/step_a6_skill_classification.py --eval` |
 | LLM vs 規則法的 soft 偵測 precision / recall | 未量化（需上一項的人工標籤） | 同上；`run_eval()` 已實作 |
 | 每筆成本 (USD) | `avg_cost_usd_per_job` 全部為 `null`。已量到實際 token 數，但未取得本帳號 rate card | 由帳號擁有者填入 us-west-2 on-demand 費率；不採用第三方轉述數字 |
 | canonical verifier 模型比較 | 未測（`model_registry.yaml` 的 `canonical_verifier.candidates: []`） | 須另量 protected-pair 錯誤率，且 verifier 必須能 abstain |
@@ -335,7 +335,7 @@ skill:docker(docker_compose
 skill:eda(exploratory_data_analysis
 ```
 
-**規模（實測，`step_a7b_key_change_impact.py`）**：受影響的不只技能字典 —— commit message 只舉了技能的例子，實際上證照字典受影響的數量是技能的 6.4 倍。
+**規模（實測，`pipeline/step_a7b_key_change_impact.py`）**：受影響的不只技能字典 —— commit message 只舉了技能的例子，實際上證照字典受影響的數量是技能的 6.4 倍。
 
 | 字典 | 總筆數 | key 值會改變 | 佔比 |
 |------|--------|--------------|------|
@@ -410,7 +410,7 @@ Skill 節點來自語料的少數部分。這限制了圖的技能覆蓋，也�
 
 ### A3.3 `工作技能` 1,032 個節點的命名組成
 
-規則寫死於 `step_a7_data_composition.py`（`data_composition_rule_v0.1`），依序判定、先命中者為準；純字面規則、不呼叫模型。DF 取自 A5 全量統計。
+規則寫死於 `pipeline/step_a7_data_composition.py`（`data_composition_rule_v0.1`），依序判定、先命中者為準；純字面規則、不呼叫模型。DF 取自 A5 全量統計。
 
 該欄位 job-level 歸屬總量 DF = 722,610。
 
@@ -483,8 +483,8 @@ r2 §2 寫「37.4%（DF 佔 52.1%）是純動作職責描述」。這一組數�
 
 ### A4.3 給 B 的提醒
 
-- **`47e543d` 的 key 變更影響 296 個 registry ID，不只 commit message 舉例的技能**：skill 40 筆、**credential 256 筆（15.6%）**。若你的 `graph/` 是在該 commit 之前產生的，`edges.csv` 的 `REQUIRES_CREDENTIAL` target 會比 `HAS_SKILL` 受影響更廣。請用 `python step_a7b_key_change_impact.py` 對自己機器的字典確認，再決定要不要重跑。
-- `step5` loader 預設取最新版 `fixtures/soft_skill_blacklist_v*.csv`，目前會拿到 `v0.3`（1 筆）。此改動在 `step5_statistical_edges.py`，**需要 B ack**。
+- **`47e543d` 的 key 變更影響 296 個 registry ID，不只 commit message 舉例的技能**：skill 40 筆、**credential 256 筆（15.6%）**。若你的 `graph/` 是在該 commit 之前產生的，`edges.csv` 的 `REQUIRES_CREDENTIAL` target 會比 `HAS_SKILL` 受影響更廣。請用 `python pipeline/step_a7b_key_change_impact.py` 對自己機器的字典確認，再決定要不要重跑。
+- `step5` loader 預設取最新版 `fixtures/soft_skill_blacklist_v*.csv`，目前會拿到 `v0.3`（1 筆）。此改動在 `pipeline/step5_statistical_edges.py`，**需要 B ack**。
 - 重跑後請回報：CORE_SKILL 是否仍被泛用技能主導（抽樣）、Step7 是否有新 fail/warn、`nodes.csv` 的 `skill_kind` 分布是否為 technical 1,048 / tool 388 / soft 1。
 - 只換 `skill_kind` 時只需重跑 Step 6（→ 8）；只換黑名單需 Step 5 → 6（→ 7 → 8）。
 

@@ -5,10 +5,15 @@ Verifies NPMI, conditional probability, occupation aggregation logic.
 
 import json
 import math
+import sys
 import tempfile
 from pathlib import Path
 
-from step5_statistical_edges import (
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT / "pipeline") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "pipeline"))
+
+from step5_statistical_edges import (  # noqa: E402
     StatisticalConfig,
     StatisticalEdgeBuilder,
     compute_co_occurrence,

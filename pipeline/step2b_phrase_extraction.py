@@ -38,9 +38,10 @@ from assertion_detection import detect_assertion_and_requirement
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-DATASET_DIR = Path(__file__).parent / "dataset"
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
+DATASET_DIR = _REPO_ROOT / "dataset"
 JOBS_CSV = DATASET_DIR / "職缺.csv"
-GRAPH_DIR = Path(__file__).parent / "graph"
+GRAPH_DIR = _REPO_ROOT / "graph"
 LEXICON_CSV = GRAPH_DIR / "phrase_lexicon_v0.1.csv"
 OUTPUT_JSONL = GRAPH_DIR / "extractions_phrase.jsonl"
 OUTPUT_MANIFEST = GRAPH_DIR / "extraction_phrase_manifest.json"

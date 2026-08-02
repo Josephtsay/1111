@@ -10,25 +10,19 @@ Covers the four required behaviours:
 Run: python3 test_location_mask_mock.py
 """
 
-import importlib.util
 import sys
 import tempfile
 from pathlib import Path
 
 import pandas as pd
 
-# The working copy lives in a directory named "1111", which is not a valid
-# Python identifier, so the package is loaded under its canonical alias.
-_ROOT = Path(__file__).resolve().parent
-if "job_skill_graph" not in sys.modules:
-    _spec = importlib.util.spec_from_file_location(
-        "job_skill_graph",
-        _ROOT / "__init__.py",
-        submodule_search_locations=[str(_ROOT)],
-    )
-    _module = importlib.util.module_from_spec(_spec)
-    sys.modules["job_skill_graph"] = _module
-    _spec.loader.exec_module(_module)
+# The serving package now lives in a real `job_skill_graph/` directory at the
+# repository root, so it imports by name. The previous importlib alias hack was
+# only needed while the package was flattened into a directory named "1111",
+# which is not a valid Python identifier.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from job_skill_graph.location_mask import (  # noqa: E402
     LocationCodeTable,
@@ -212,7 +206,7 @@ def test_comma_joined_codes_are_split():
 
 
 def test_real_city_table_rolls_up_every_district():
-    path = _ROOT / "dataset" / "城市對照表.csv"
+    path = REPO_ROOT / "dataset" / "城市對照表.csv"
     if not path.is_file():
         print("skipped: dataset/城市對照表.csv not present")
         return

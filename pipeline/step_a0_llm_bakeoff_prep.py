@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
 GRAPH_DIR = ROOT / "graph"
 GOLDEN_IDS = GRAPH_DIR / "golden_slice_ids.json"
 GOLDEN_CSV = GRAPH_DIR / "golden_slice.csv"

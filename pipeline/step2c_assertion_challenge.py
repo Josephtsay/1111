@@ -39,7 +39,7 @@ from step3_canonicalization import (
 # Paths
 # ─────────────────────────────────────────────────────────────────────────────
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
 FIXTURE_SET = ROOT / "fixtures" / "assertion_challenge_set_v0.1.jsonl"
 GRAPH_DIR = ROOT / "graph"
 GRAPH_SET = GRAPH_DIR / "assertion_challenge_set_v0.1.jsonl"

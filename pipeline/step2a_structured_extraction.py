@@ -36,9 +36,10 @@ import duckdb
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-DATASET_DIR = Path(__file__).parent / "dataset"
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
+DATASET_DIR = _REPO_ROOT / "dataset"
 JOBS_CSV = DATASET_DIR / "職缺.csv"
-OUTPUT_DIR = Path(__file__).parent / "graph"
+OUTPUT_DIR = _REPO_ROOT / "graph"
 
 EXTRACTOR_VERSION = "v0.1"
 BATCH_SIZE = 10_000

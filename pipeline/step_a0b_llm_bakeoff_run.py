@@ -44,7 +44,7 @@ from typing import Any
 
 import llm_client
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root; graph/ dataset/ fixtures/ 都掛在根目錄
 GRAPH_DIR = ROOT / "graph"
 BAKEOFF_DIR = GRAPH_DIR / "llm_bakeoff_v0.1"
 PROMPTS = BAKEOFF_DIR / "prompts.jsonl"
