@@ -1,0 +1,86 @@
+{
+  "stage": 1,
+  "sample": "test ORDER BY query_id LIMIT 2000",
+  "baseline": {
+    "arm": "baseline",
+    "metrics": {
+      "ndcg@10": 0.008804623414838278,
+      "precision@10": 0.0018181818181818182,
+      "top1": 0.003977272727272727,
+      "mrr": 0.007990346938443313,
+      "hit@10": 0.016477272727272726,
+      "query_count": 1760.0,
+      "hit@1": 0.003977272727272727,
+      "recall@50": 0.018945707070707068
+    },
+    "resolve": {
+      "skill": 6,
+      "occ": 1134,
+      "both": 1,
+      "none": 859,
+      "any_anchor_rate": 0.5705
+    },
+    "occ_pool": {
+      "occ_queries": 1134,
+      "pool_p50": 32349.0,
+      "pool_p90": 114937,
+      "pool_mean": 54339.787477954145,
+      "huge_pool_share": 0.6657848324514991
+    },
+    "graph_incremental": {
+      "positives_found_only_by_graph": 16,
+      "positives_total": 4568,
+      "queries_helped": 15,
+      "share": 0.0035026269702276708
+    },
+    "eval_time_seconds": 124.5,
+    "queries_scored": 1760,
+    "with_hits": 29
+  },
+  "treatment": {
+    "arm": "treatment",
+    "metrics": {
+      "ndcg@10": 0.00911184834073013,
+      "precision@10": 0.0018181818181818182,
+      "top1": 0.004545454545454545,
+      "mrr": 0.00837101115251794,
+      "hit@10": 0.016477272727272726,
+      "query_count": 1760.0,
+      "hit@1": 0.004545454545454545,
+      "recall@50": 0.01904040404040404
+    },
+    "resolve": {
+      "skill": 6,
+      "occ": 1134,
+      "both": 1,
+      "none": 859,
+      "any_anchor_rate": 0.5705
+    },
+    "occ_pool": {
+      "occ_queries": 1134,
+      "pool_p50": 15915.0,
+      "pool_p90": 52084,
+      "pool_mean": 22063.964726631395,
+      "huge_pool_share": 0.43562610229276894
+    },
+    "graph_incremental": {
+      "positives_found_only_by_graph": 19,
+      "positives_total": 4568,
+      "queries_helped": 17,
+      "share": 0.004159369527145359
+    },
+    "eval_time_seconds": 43.2,
+    "queries_scored": 1760,
+    "with_hits": 29
+  },
+  "delta_treatment_minus_baseline": {
+    "ndcg@10": 0.0003072249258918528,
+    "mrr": 0.0003806642140746271,
+    "hit@10": 0.0,
+    "hit@1": 0.0005681818181818184,
+    "recall@50": 9.469696969697378e-05
+  },
+  "delta_pool_p50": -16434.0,
+  "delta_huge_pool_share": -0.23015873015873017,
+  "delta_any_anchor": 0.0
+}

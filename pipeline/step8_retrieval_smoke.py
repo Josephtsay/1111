@@ -379,6 +379,39 @@ _STANDALONE_ROLES = (
 )
 _ROLE_WORDS = (frozenset(_JOB_SUFFIXES) | frozenset(_STANDALONE_ROLES)) - _BROAD_ROLE_WORDS
 
+# Train-top queries that are pay/shift/employment-intent filters, not occupations.
+# Resolving them into huge occ pools only injects noise; leave them to BM25.
+_INTENT_DENYLIST = frozenset({
+    "現領",
+    "日領",
+    "兼職",
+    "工讀",
+    "工讀生",
+    "晚班",
+    "早班",
+    "大夜",
+    "小夜",
+    "暑期",
+    "短期",
+    "正職",
+    "全職",
+    "在家工作",
+    "居家辦公",
+    "遠端",
+    "遠端工作",
+    "二度就業",
+    "可在家工作",
+    "假日",
+    "排班",
+    "時薪",
+    "日薪",
+    "無經驗",
+    "新鮮人",
+    "pt",
+    "part time",
+    "full time",
+})
+
 
 @dataclass
 class PreprocessedQuery:
@@ -508,6 +541,14 @@ def resolve_query(query: str, index: GraphIndex) -> QueryResolution:
     for step in pre.steps:
         result.resolution_log.append(f"preprocess: {step}")
 
+    # Intent / non-occupation filters: do not invent graph anchors.
+    if normalized in _INTENT_DENYLIST:
+        result.unresolved_terms.append(normalized)
+        result.resolution_log.append(
+            f"full_query → intent_denylist ({normalized!r}, skip graph)"
+        )
+        return result
+
     # 1. Try full query as skill
     skill_id = _resolve_skill(normalized, index)
     if skill_id:
@@ -527,6 +568,11 @@ def resolve_query(query: str, index: GraphIndex) -> QueryResolution:
     pending: list[str] = []
     for token in pre.tokens:
         if token == normalized:
+            continue
+        if token in _INTENT_DENYLIST:
+            result.resolution_log.append(
+                f"token '{token}' → intent_denylist (skip)"
+            )
             continue
         skill = _resolve_skill(token, index)
         if skill:
@@ -644,15 +690,36 @@ def _resolve_skill(
     return None
 
 
+# Prefer a concrete minor (leaf) occupation over collapsing to middle/major.
+# Train evidence: reverse-suffix 「司機」 used to resolve to middle 180200 and
+# fan out to 100k+ jobs after descendant expansion; picking the busiest leaf
+# keeps the anchor narrow while still covering enough postings (MIN_LEAF_JOBS).
+MIN_LEAF_JOBS = 50
+
+
+def _occ_level(code: str) -> str:
+    """Return major / middle / minor for a 1111 occupation CodeNo."""
+    if code.endswith("0000"):
+        return "major"
+    if code.endswith("00"):
+        return "middle"
+    return "minor"
+
+
+def _as_occ_id(code_or_id: str) -> str:
+    return code_or_id if code_or_id.startswith("occ:") else f"occ:{code_or_id}"
+
+
 def _pick_occupation_from_candidates(
     candidates: list[str], index: GraphIndex
 ) -> str | None:
     """
     Collapse multiple occupation IDs to one anchor.
 
-    Prefer a shared middle (4-digit) parent, then major (2-digit), else the
-    candidate with the most jobs. Used for ambiguous aliases, prefix fan-out,
-    and reverse-suffix fan-out (司機 → many *司機 aliases).
+    Stage-1 policy (leaf-prefer): if any minor candidate has ≥ MIN_LEAF_JOBS
+    direct jobs, pick the busiest leaf. If the best leaf is too sparse, promote
+    only one level to its middle (e.g. 廚師 leaf with 7 jobs). Parent collapse
+    is the fallback when no usable leaf exists.
     """
     if not candidates:
         return None
@@ -661,8 +728,26 @@ def _pick_occupation_from_candidates(
         only = uniq[0]
         code = only.replace("occ:", "")
         if code in index.occ_to_jobs or code in index.core_skills:
-            return only
+            return _as_occ_id(only)
         return None
+
+    leaf_counts: list[tuple[str, int]] = []
+    for c in uniq:
+        code = c.replace("occ:", "")
+        if _occ_level(code) != "minor":
+            continue
+        n = len(index.occ_to_jobs.get(code, []))
+        if n > 0:
+            leaf_counts.append((code, n))
+    if leaf_counts:
+        best_code, best_n = max(leaf_counts, key=lambda x: x[1])
+        if best_n >= MIN_LEAF_JOBS:
+            return f"occ:{best_code}"
+        # Sparse leaf: promote one level so the pool is usable, not empty.
+        middle = best_code[:4] + "00"
+        if middle in index.occ_to_jobs or middle in index.core_skills:
+            return f"occ:{middle}"
+        return f"occ:{best_code}"
 
     codes = [c.replace("occ:", "") for c in uniq]
     parents = {c[:4] + "00" for c in codes if len(c) >= 4}
@@ -698,7 +783,7 @@ def _pick_occupation_from_candidates(
         if count > best_count:
             best = c
             best_count = count
-    return best
+    return _as_occ_id(best) if best else None
 
 
 def _resolve_occupation(
@@ -871,6 +956,12 @@ def _skill_kind_multiplier(
     return SKILL_KIND_WEIGHTS.get(kind, 1.0)
 
 
+# When an occupation anchor would fan out past this many jobs (direct +
+# descendants), switch to narrow mode: direct jobs only + CORE_SKILL HAS_SKILL.
+OCC_POOL_CAP = 5_000
+OCC_CORE_SKILL_TOP_N = 8
+
+
 def traverse_and_rank(
     query: str,
     index: GraphIndex,
@@ -879,12 +970,14 @@ def traverse_and_rank(
     expand_top_n: int = 5,
     expand_min_npmi: float = 0.2,
     use_skill_kind_weights: bool = False,
+    narrow_large_occ: bool = True,
 ) -> TraversalResult:
     """
     Execute graph traversal for a query. Strategy:
     - 0-hop: exact skill/occ/credential → jobs
     - 1-hop: top CO_OCCURS_WITH by NPMI → expanded jobs (lower weight)
-    - Occupation: IN_OCCUPATION (+ descendants) → jobs
+    - Occupation: IN_OCCUPATION (+ descendants) → jobs; large middle/major
+      pools are narrowed via CORE_SKILL when narrow_large_occ=True
     - CORE_SKILL boost: jobs matching occupation's core skills get bonus
     - Credential path: credential mentions resolved from query → jobs
     - Multi-skill: jobs matching multiple query skills get intersection bonus
@@ -992,45 +1085,96 @@ def traverse_and_rank(
                 job_scores[job_id] += 0.4
                 job_paths[job_id].append(f"credential:{cred_id}")
 
-    # Occupation path (with hierarchy descendant expansion)
-    # Collect CORE_SKILL set for boosting
+    # Occupation path (with hierarchy descendant expansion, optionally narrowed)
     occ_core_skill_set: set[str] = set()
     for occ_id in resolution.resolved_occupations:
         occ_code = occ_id.replace("occ:", "")
-
-        # Collect direct jobs + all descendant occupation jobs
-        all_occ_codes = [occ_code]
+        level = _occ_level(occ_code)
         descendants = _get_descendants(occ_code, index)
-        all_occ_codes.extend(descendants)
+        expanded_codes = [occ_code, *descendants]
+        expanded_jobs: set[str] = set()
+        for code in expanded_codes:
+            expanded_jobs.update(index.occ_to_jobs.get(code, []))
 
-        jobs = []
-        for code in all_occ_codes:
-            jobs.extend(index.occ_to_jobs.get(code, []))
-        jobs = list(set(jobs))
+        use_narrow = narrow_large_occ and (
+            level in ("middle", "major") or len(expanded_jobs) > OCC_POOL_CAP
+        )
 
-        result.occupation_hits += len(jobs)
-        if descendants:
+        if use_narrow:
+            # Stay inside the occupation subtree: direct jobs + jobs that both
+            # sit under this occ (expanded_jobs) AND carry a CORE_SKILL. Never
+            # pull global Excel/Word fan-out from outside the subtree.
+            direct_jobs = set(index.occ_to_jobs.get(occ_code, []))
+            selected: set[str] = set(direct_jobs)
+            for job_id in direct_jobs:
+                job_scores[job_id] += 0.5
+                job_paths[job_id].append(f"occupation:{occ_id}")
+
+            core = index.core_skills.get(occ_code, [])
+            if not core and descendants:
+                merged: dict[str, float] = {}
+                for child in descendants[:40]:
+                    for sid, rate in index.core_skills.get(child, []):
+                        merged[sid] = max(merged.get(sid, 0.0), rate)
+                core = list(merged.items())
+            top_core = sorted(core, key=lambda x: -x[1])[:OCC_CORE_SKILL_TOP_N]
+            core_added = 0
+            if top_core:
+                core_names = [f"{s}({r:.2f})" for s, r in top_core[:5]]
+                result.trace_lines.append(
+                    f"→ {occ_id} -[CORE_SKILL]-> top: {', '.join(core_names)} "
+                    f"(narrow:core_skill∩subtree)"
+                )
+                for skill_id, rate in top_core:
+                    occ_core_skill_set.add(skill_id)
+                    per_skill = 0
+                    for job_id, req, conf in index.skill_to_jobs.get(skill_id, []):
+                        if job_id not in expanded_jobs:
+                            continue
+                        if job_id not in selected:
+                            selected.add(job_id)
+                            core_added += 1
+                        job_scores[job_id] += 0.25 * float(rate)
+                        job_paths[job_id].append(
+                            f"narrow:core_skill:{skill_id}"
+                        )
+                        per_skill += 1
+                        if per_skill >= 500 or len(selected) >= OCC_POOL_CAP:
+                            break
+                    if len(selected) >= OCC_POOL_CAP:
+                        break
+
+            result.occupation_hits += len(selected)
             result.trace_lines.append(
-                f"→ {occ_id} + {len(descendants)} descendants <-[IN_OCCUPATION]- {len(jobs):,} jobs"
+                f"→ {occ_id} narrow pool {len(selected):,} "
+                f"(direct={len(direct_jobs):,}, core_extra={core_added:,}; "
+                f"full subtree {len(expanded_jobs):,})"
             )
         else:
-            result.trace_lines.append(
-                f"→ {occ_id} <-[IN_OCCUPATION]- {len(jobs):,} jobs"
-            )
-        for job_id in jobs:
-            job_scores[job_id] += 0.5
-            job_paths[job_id].append(f"occupation:{occ_id}")
+            jobs = list(expanded_jobs)
+            result.occupation_hits += len(jobs)
+            if descendants:
+                result.trace_lines.append(
+                    f"→ {occ_id} + {len(descendants)} descendants "
+                    f"<-[IN_OCCUPATION]- {len(jobs):,} jobs"
+                )
+            else:
+                result.trace_lines.append(
+                    f"→ {occ_id} <-[IN_OCCUPATION]- {len(jobs):,} jobs"
+                )
+            for job_id in jobs:
+                job_scores[job_id] += 0.5
+                job_paths[job_id].append(f"occupation:{occ_id}")
 
-        # Collect CORE_SKILL for this occupation (for boost below)
-        core = index.core_skills.get(occ_code, [])
-        if core:
-            top_core = sorted(core, key=lambda x: -x[1])[:10]
-            core_names = [f"{s}({r:.2f})" for s, r in top_core[:5]]
-            result.trace_lines.append(
-                f"→ {occ_id} -[CORE_SKILL]-> top: {', '.join(core_names)}"
-            )
-            for skill_id, rate in top_core:
-                occ_core_skill_set.add(skill_id)
+            core = index.core_skills.get(occ_code, [])
+            if core:
+                top_core = sorted(core, key=lambda x: -x[1])[:10]
+                core_names = [f"{s}({r:.2f})" for s, r in top_core[:5]]
+                result.trace_lines.append(
+                    f"→ {occ_id} -[CORE_SKILL]-> top: {', '.join(core_names)}"
+                )
+                for skill_id, rate in top_core:
+                    occ_core_skill_set.add(skill_id)
 
     # CORE_SKILL boost: only boost jobs that match BOTH occupation AND a query skill
     # (avoids O(n*m) scan and avoids rewarding unrelated skills)
