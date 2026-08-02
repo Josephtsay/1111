@@ -132,6 +132,74 @@ def sanitize_registry_key(key: str) -> str:
     return value.strip("_")
 
 
+_PAREN_RE = re.compile(r"[（(]([^（()）]*)[)）]")
+_ALIAS_SPLIT_RE = re.compile(r"[/、,，]")
+
+
+def derive_paren_aliases(canonical_name: str) -> list[str]:
+    """
+    Split a canonical_name's parenthetical abbreviations into alias candidates.
+
+    'Kubernetes(K8S)'              → ['Kubernetes', 'K8S']
+    'Node.js(Node/NodeJS)'         → ['Node.js', 'Node', 'NodeJS']
+    'Feature Engineering(特徵工程)'  → ['Feature Engineering', '特徵工程']
+    '商業智慧(BI)分析與應用'          → ['商業智慧 分析與應用', 'BI']
+
+    Returns raw (un-normalized) forms; the caller normalizes and validates.
+    Pure function so the standalone rebuild path can reuse it without
+    re-running the full Step 3 pipeline.
+    """
+    if not canonical_name:
+        return []
+    inners = _PAREN_RE.findall(canonical_name)
+    if not inners:
+        return []
+    aliases: list[str] = []
+    outside = re.sub(r"\s+", " ", _PAREN_RE.sub(" ", canonical_name)).strip()
+    if outside:
+        aliases.append(outside)
+    for inner in inners:
+        for part in _ALIAS_SPLIT_RE.split(inner):
+            part = part.strip()
+            if part:
+                aliases.append(part)
+    return aliases
+
+
+_NUMERIC_ALIAS_RE = re.compile(r"^[\d._\-/]+$")
+
+
+def is_meaningful_alias_key(alias_key: str) -> bool:
+    """
+    Shared gate for derived aliases, used by both the in-pipeline path
+    (CanonicalRegistry.apply_derived_aliases) and the standalone rebuild
+    (step3b_derive_aliases) so the two cannot drift apart.
+
+    Rejects version-number fragments such as '2012_2019_2022' harvested from
+    'Windows Server(2012 2019 2022)': nobody searches a bare version list, and
+    binding it would only add noise to the resolver vocabulary.
+    """
+    if len(alias_key) < 2:
+        return False
+    if _NUMERIC_ALIAS_RE.fullmatch(alias_key):
+        return False
+    if not is_clean_registry_key(alias_key, allow_short=True):
+        return False
+    return True
+
+
+def _guess_language(text: str) -> str:
+    has_cjk = bool(re.search(r"[\u4e00-\u9fff]", text))
+    has_latin = bool(re.search(r"[a-z]", text, re.IGNORECASE))
+    if has_cjk and has_latin:
+        return "mixed"
+    if has_cjk:
+        return "zh"
+    if has_latin:
+        return "en"
+    return "unknown"
+
+
 def normalize_key(text: str) -> str:
     """Produce registry_key：空白→底線，剝外層括號/引號。"""
     value = normalize_text(text)
@@ -153,13 +221,22 @@ def parse_canonical_candidate(candidate: str) -> tuple[str, str] | None:
     return None
 
 
-def is_clean_registry_key(key: str) -> bool:
-    """Reject obvious parse/offset garbage before seeding or accepting."""
+def is_clean_registry_key(key: str, *, allow_short: bool = False) -> bool:
+    """
+    Reject obvious parse/offset garbage before seeding or accepting.
+
+    allow_short is for aliases whose provenance is a curated parenthetical
+    inside canonical_name (e.g. 'Visual basic(VB)' → 'vb'). The short-key
+    allowlist exists to filter 2-char noise coming out of free-text
+    extraction; an abbreviation a human put in parentheses is much stronger
+    evidence, and users type exactly those forms. The garbage-shape checks
+    below still apply either way.
+    """
     if not key or key == "unknown":
         return False
     # 2-char CJK (正航) and allowlisted short Latin/symbol skills are OK
     if len(key) <= 2:
-        if key in SHORT_KEY_ALLOWLIST or _CJK_RE.fullmatch(key):
+        if allow_short or key in SHORT_KEY_ALLOWLIST or _CJK_RE.fullmatch(key):
             pass
         else:
             return False
@@ -346,6 +423,69 @@ class CanonicalRegistry:
             ):
                 bound += 1
         return bound
+
+    def apply_derived_aliases(self) -> dict[str, int]:
+        """
+        Derive aliases from parenthetical abbreviations already present in
+        canonical_name, e.g. 'Kubernetes(K8S)' → {kubernetes, k8s}.
+
+        Why this matters: measured on the top 3,000 distinct search queries
+        (163,286 instances) only 0.1% resolved to a Skill anchor, because
+        alias_dictionary held just 37 hand-seeded entries while users type the
+        abbreviation ('k8s', 'reactjs'), not the registry's compound key
+        ('kubernetes_k8s'). The abbreviations were already sitting inside
+        canonical_name — this harvests them instead of hand-maintaining a seed
+        file.
+
+        Collision handling is two-pass on purpose. add_skill_alias() marks the
+        *first* binding unique and only later ones ambiguous, which would let
+        'eda' resolve uniquely to whichever of EDA(Exploratory Data Analysis) /
+        EDA(Electronic Design Automation) happened to be seeded first. Here we
+        collect every candidate first, then bind only aliases with exactly one
+        target; genuinely ambiguous ones are recorded as ambiguous for audit
+        and left unbound (Step 8 loads only ambiguity_status == "unique").
+        """
+        candidates: dict[str, set[str]] = {}
+        raw_forms: dict[str, str] = {}
+        for canonical_key, entry in self.skills.items():
+            for raw_alias in derive_paren_aliases(entry.get("canonical_name", "")):
+                alias_key = normalize_key(raw_alias)
+                if not alias_key or alias_key == canonical_key:
+                    continue
+                if not is_meaningful_alias_key(alias_key):
+                    continue
+                candidates.setdefault(alias_key, set()).add(canonical_key)
+                raw_forms.setdefault(alias_key, raw_alias)
+
+        stats = {"bound": 0, "ambiguous": 0, "rejected": 0}
+        for alias_key, targets in sorted(candidates.items()):
+            raw_alias = raw_forms[alias_key]
+            if len(targets) > 1:
+                for canonical_key in sorted(targets):
+                    self.alias_meta.append({
+                        "alias_key": alias_key,
+                        "raw_alias": raw_alias,
+                        "entity_type": "skill",
+                        "canonical_id": f"skill:{canonical_key}",
+                        "source": "derived_paren",
+                        "language": _guess_language(alias_key),
+                        "ambiguity_status": "ambiguous",
+                        "dictionary_version": DICTIONARY_VERSION,
+                    })
+                stats["ambiguous"] += 1
+                continue
+            canonical_key = next(iter(targets))
+            if self.add_skill_alias(
+                alias_key,
+                raw_alias,
+                canonical_key,
+                language=_guess_language(alias_key),
+                source="derived_paren",
+            ):
+                stats["bound"] += 1
+            else:
+                stats["rejected"] += 1
+        return stats
 
     def resolve(
         self,
@@ -556,6 +696,13 @@ def run_canonicalization(
     print("  Binding seed aliases...")
     alias_bound = registry.apply_seed_aliases()
     print(f"  Alias bindings applied: {alias_bound}")
+
+    print("  Deriving aliases from parenthetical abbreviations...")
+    derived_stats = registry.apply_derived_aliases()
+    print(
+        f"  Derived aliases: bound={derived_stats['bound']}, "
+        f"ambiguous={derived_stats['ambiguous']}, rejected={derived_stats['rejected']}"
+    )
 
     print("  Loading phrase extractions index (2B)...")
     phrase_by_job = load_phrase_by_job(EXTRACTIONS_PHRASE)

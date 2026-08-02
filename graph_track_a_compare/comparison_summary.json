@@ -1,0 +1,77 @@
+{
+  "experiment": "Track A old vs new search effect comparison",
+  "date": "2026-08-02",
+  "eval_config": {
+    "split": "test",
+    "limit": 2000,
+    "top_k": 50,
+    "metrics_at_k": 10
+  },
+  "old_track_a": {
+    "code": "committed HEAD (git stash): weighted BM25+graph fusion, no substring, 37 manual aliases",
+    "graph": "pre-rerun nodes/edges (same registry, stale alias dict restored for eval)",
+    "runs": {
+      "B0": {
+        "ndcg@10": 0.0123,
+        "mrr": 0.0106,
+        "hit@10": 0.0233,
+        "hit@1": 0.0050,
+        "recall@50": 0.0273
+      },
+      "G1": {
+        "ndcg@10": 0.0111,
+        "mrr": 0.0096,
+        "hit@10": 0.0205,
+        "hit@1": 0.0044,
+        "recall@50": 0.0265,
+        "delta_vs_B0_ndcg@10": -0.0012
+      }
+    }
+  },
+  "new_track_a": {
+    "code": "local WIP: derive_paren aliases, step6 sanitize, step8 substring+RRF+skill_kind weights",
+    "graph": "full rerun step3→7 (103 registry aliases, 107 alias rows, Step7 13 PASS)",
+    "runs": {
+      "B0": {
+        "ndcg@10": 0.0121,
+        "mrr": 0.0109,
+        "hit@10": 0.0217,
+        "hit@1": 0.0050,
+        "recall@50": 0.0291
+      },
+      "G1": {
+        "ndcg@10": 0.0105,
+        "mrr": 0.0104,
+        "hit@10": 0.0176,
+        "hit@1": 0.0060,
+        "recall@50": 0.0287,
+        "delta_vs_B0_ndcg@10": -0.0016,
+        "graph_incremental_positives": "9/4361 (0.21%)"
+      },
+      "G2": {
+        "ndcg@10": 0.0111,
+        "mrr": 0.0090,
+        "hit@10": 0.0236,
+        "hit@1": 0.0027,
+        "recall@50": 0.0300,
+        "delta_vs_G1_recall@50": 0.0013
+      }
+    }
+  },
+  "resolution_probe_2000_queries": {
+    "note": "NEW step8 resolve logic on both; only alias_dictionary differs",
+    "aliases_37": {"skill_aliases_loaded": 37, "skill_anchor_queries": 9, "skill_anchor_pct": 0.004, "unresolved": 1075, "substring_hits": 108},
+    "aliases_103": {"skill_aliases_loaded": 103, "skill_anchor_queries": 9, "skill_anchor_pct": 0.004, "unresolved": 1075, "substring_hits": 108},
+    "interpretation": "81 derived keys mostly overlap manual seed; eval queries still 0.4% skill anchor. Substring fires on 5.4% queries but does not raise skill-anchor count on this split."
+  },
+  "verdict": {
+    "search_effect_changed": true,
+    "magnitude": "small and mixed",
+    "highlights": [
+      "recall@50: OLD G1 0.0265 → NEW G1 0.0287 (+8.3% relative); NEW G2 best at 0.0300",
+      "ndcg@10: OLD G1 0.0111 → NEW G1 0.0105 (worse); graph still below BM25-only on this metric",
+      "Graph-only incremental positives: 9/4361 (0.21%) with NEW G1",
+      "103 aliases did not increase skill-anchor rate on 2000 test queries vs 37"
+    ]
+  }
+}

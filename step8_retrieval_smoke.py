@@ -28,7 +28,7 @@ import argparse
 import csv
 import json
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -157,12 +157,74 @@ class GraphIndex:
         self._load_edges()
         self._load_aliases()
         self._load_job_titles()
+        self._load_skill_kinds()
+        self._build_substring_vocab()
         print(f"  Loaded in {time.time()-t0:.1f}s")
         print(f"    Skills with HAS_SKILL: {len(self.skill_to_jobs):,}")
         print(f"    Occupations with jobs: {len(self.occ_to_jobs):,}")
         print(f"    CO_OCCURS pairs: {sum(len(v) for v in self.co_occurs.values()):,}")
         print(f"    Skill aliases: {len(self.skill_alias):,}")
         print(f"    Occupation aliases: {len(self.occ_alias):,}")
+        print(f"    Substring vocab: {len(self.skill_substrings):,} skill / "
+              f"{len(self.occ_substrings):,} occupation")
+        if self.skill_kind:
+            kinds = Counter(self.skill_kind.values())
+            print(f"    skill_kind: {dict(kinds)}")
+
+    def _load_skill_kinds(self) -> None:
+        """
+        Load skill_kind from nodes.csv so retrieval can weight by kind.
+
+        Read from nodes.csv (not skill_dictionary.csv) because nodes.csv is the
+        frozen Step 6 export whose node_id values are guaranteed to match the
+        edge endpoints; the dictionary's registry_key has drifted from the
+        graph before.
+        """
+        self.skill_kind: dict[str, str] = {}
+        nodes_path = self.graph_dir / "nodes.csv"
+        if not nodes_path.exists():
+            return
+        with nodes_path.open("r", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if row.get("node_type") != "Skill":
+                    continue
+                kind = (row.get("skill_kind") or "").strip()
+                if kind:
+                    self.skill_kind[row["node_id"]] = kind
+
+    def _build_substring_vocab(self) -> None:
+        """
+        Build length-descending vocabularies for substring resolution.
+
+        Measured motivation: 50.3% of the top-3,000 query instances resolved to
+        nothing at all, and the failures were dominated by terms like 司機 /
+        作業員 / 清潔人員 that exist inside longer registry entries. Exact-key
+        and exact-alias lookup alone cannot reach them.
+
+        Latin and CJK are handled differently on purpose (see _substring_hit):
+        CJK has no word delimiters so plain containment is correct, while a
+        bare Latin containment check would let 'go' match 'google'.
+        """
+        skill_vocab: dict[str, str] = {}
+        for alias_key, canonical in self.skill_alias.items():
+            if canonical in self.skill_to_jobs and len(alias_key) >= 2:
+                skill_vocab.setdefault(alias_key, canonical)
+        for skill_id in self.skill_to_jobs:
+            surface = skill_id.removeprefix("skill:").replace("_", " ").strip()
+            if len(surface) >= 2:
+                skill_vocab.setdefault(surface, skill_id)
+        self.skill_substrings: list[tuple[str, str]] = sorted(
+            skill_vocab.items(), key=lambda kv: (-len(kv[0]), kv[0])
+        )
+
+        occ_vocab: dict[str, str] = {}
+        for alias_key, canonical in self.occ_alias.items():
+            code = canonical.replace("occ:", "")
+            if (code in self.occ_to_jobs or code in self.core_skills) and len(alias_key) >= 2:
+                occ_vocab.setdefault(alias_key, canonical)
+        self.occ_substrings: list[tuple[str, str]] = sorted(
+            occ_vocab.items(), key=lambda kv: (-len(kv[0]), kv[0])
+        )
 
     def _load_edges(self) -> None:
         edges_path = self.graph_dir / "edges.csv"
@@ -281,8 +343,9 @@ def resolve_query(query: str, index: GraphIndex) -> QueryResolution:
         result.resolution_log.append(f"full_query → {occ_id}")
         return result
 
-    # 3. Split into tokens and resolve each
+    # 3. Split into tokens and resolve each (exact only)
     tokens = query.strip().split()
+    pending: list[str] = []
     for token in tokens:
         norm_tok = normalize_query_token(token)
         skill = _resolve_skill(norm_tok, index)
@@ -297,14 +360,88 @@ def resolve_query(query: str, index: GraphIndex) -> QueryResolution:
                 result.resolved_occupations.append(occ)
                 result.resolution_log.append(f"token '{token}' → {occ}")
             continue
+        pending.append(token)
+
+    # 4. Substring fallback, only for tokens no exact pass could resolve.
+    #    Kept last so it cannot short-circuit multi-anchor queries.
+    for token in pending:
+        norm_tok = normalize_query_token(token)
+        skill = _resolve_skill(norm_tok, index, allow_substring=True)
+        if skill:
+            if skill not in result.resolved_skills:
+                result.resolved_skills.append(skill)
+                result.resolution_log.append(f"token '{token}' ~substring→ {skill}")
+            continue
+        occ = _resolve_occupation(norm_tok, index, allow_substring=True)
+        if occ:
+            if occ not in result.resolved_occupations:
+                result.resolved_occupations.append(occ)
+                result.resolution_log.append(f"token '{token}' ~substring→ {occ}")
+            continue
         result.unresolved_terms.append(token)
         result.resolution_log.append(f"token '{token}' → unresolved")
+
+    # 5. Whole-query substring as the very last resort (nothing else matched).
+    if not result.resolved_skills and not result.resolved_occupations:
+        skill_id = _resolve_skill(normalized, index, allow_substring=True)
+        if skill_id:
+            result.resolved_skills.append(skill_id)
+            result.resolution_log.append(f"full_query ~substring→ {skill_id}")
+            return result
+        occ_id = _resolve_occupation(normalized, index, allow_substring=True)
+        if occ_id:
+            result.resolved_occupations.append(occ_id)
+            result.resolution_log.append(f"full_query ~substring→ {occ_id}")
 
     return result
 
 
-def _resolve_skill(normalized: str, index: GraphIndex) -> str | None:
-    """Try to resolve a normalized token to a skill_id."""
+_LATIN_RE = re.compile(r"[a-z0-9]")
+_CJK_ONLY_RE = re.compile(r"^[\u4e00-\u9fff\u3400-\u4dbf]+$")
+
+
+def _substring_hit(term: str, query: str) -> bool:
+    """
+    Containment test with script-aware boundaries.
+
+    CJK terms use plain containment because Chinese has no word delimiters —
+    that is exactly how 司機 should match 送貨司機.
+
+    Terms containing Latin characters additionally require that the match is
+    not glued to surrounding alphanumerics. Without this, the 2-character
+    aliases harvested from parentheticals ('go' from Golang(Go), 'bi', 'vb')
+    would fire on unrelated words — 'go' inside 'google', 'bi' inside
+    'big data'. The boundary check keeps those aliases usable instead of
+    forcing us to drop them.
+    """
+    start = query.find(term)
+    if start < 0:
+        return False
+    if _CJK_ONLY_RE.fullmatch(term):
+        return True
+    end = start + len(term)
+    before = query[start - 1] if start > 0 else ""
+    after = query[end] if end < len(query) else ""
+    if before and _LATIN_RE.fullmatch(before):
+        return False
+    if after and _LATIN_RE.fullmatch(after):
+        return False
+    return True
+
+
+def _resolve_skill(
+    normalized: str, index: GraphIndex, *, allow_substring: bool = False
+) -> str | None:
+    """
+    Resolve a normalized token to a skill_id.
+
+    allow_substring is off by default and enabled only in resolve_query's final
+    pass. Letting substring matching run during the exact passes would make it
+    short-circuit multi-anchor queries: 'Python 資料分析' resolved to
+    skill:python by containment on the whole string and returned early, losing
+    the occ:140400 anchor (and with it the occupation+skill boost) that token
+    splitting used to find.
+    """
     # Direct registry hit
     candidate = f"skill:{normalized.replace(' ', '_')}"
     if candidate in index.skill_to_jobs:
@@ -318,10 +455,20 @@ def _resolve_skill(normalized: str, index: GraphIndex) -> str | None:
     candidate_dot = f"skill:{normalized}"
     if candidate_dot in index.skill_to_jobs:
         return candidate_dot
+    if not allow_substring:
+        return None
+    # Substring fallback, longest term first
+    for term, skill_id in getattr(index, "skill_substrings", ()):
+        if len(term) > len(normalized):
+            continue
+        if _substring_hit(term, normalized):
+            return skill_id
     return None
 
 
-def _resolve_occupation(normalized: str, index: GraphIndex) -> str | None:
+def _resolve_occupation(
+    normalized: str, index: GraphIndex, *, allow_substring: bool = False
+) -> str | None:
     """Try to resolve a normalized token to an occupation code."""
     # Unique alias
     if normalized in index.occ_alias:
@@ -387,6 +534,17 @@ def _resolve_occupation(normalized: str, index: GraphIndex) -> str | None:
                 if best_parent in index.occ_to_jobs or best_parent in index.core_skills:
                     return f"occ:{best_parent}"
 
+    if not allow_substring:
+        return None
+
+    # Substring fallback, longest term first. Catches the measured failure mode
+    # where the query is a shorter form contained in a longer occupation alias.
+    for term, occ_id in getattr(index, "occ_substrings", ()):
+        if len(term) > len(normalized):
+            continue
+        if _substring_hit(term, normalized):
+            return occ_id
+
     return None
 
 
@@ -425,6 +583,34 @@ def _get_descendants(occ_code: str, index: GraphIndex) -> list[str]:
     return descendants
 
 
+# skill_kind → score multiplier, applied only when use_llm_classification is on.
+#
+# Rationale: a tool/product name ('Kubernetes', 'AutoCAD') is far more
+# discriminative of a job than a generic work-content phrase that Step 3 also
+# labels 'technical' ('具備數字概念'). Before this, skill_kind was written into
+# nodes.csv by Step 6 and read by nobody, so toggling classification produced
+# byte-identical rankings and the ablation could not show any effect.
+#
+# soft is damped rather than dropped: the blacklist already removes soft skills
+# that clear the statistical guard, so anything still labelled soft here was
+# deliberately kept, and should count for something.
+SKILL_KIND_WEIGHTS = {
+    "tool": 1.3,
+    "technical": 1.0,
+    "soft": 0.5,
+    "non_skill": 0.3,
+}
+
+
+def _skill_kind_multiplier(
+    skill_id: str, index: GraphIndex, *, enabled: bool
+) -> float:
+    if not enabled:
+        return 1.0
+    kind = getattr(index, "skill_kind", {}).get(skill_id, "")
+    return SKILL_KIND_WEIGHTS.get(kind, 1.0)
+
+
 def traverse_and_rank(
     query: str,
     index: GraphIndex,
@@ -432,6 +618,7 @@ def traverse_and_rank(
     top_k: int = 5,
     expand_top_n: int = 5,
     expand_min_npmi: float = 0.2,
+    use_skill_kind_weights: bool = False,
 ) -> TraversalResult:
     """
     Execute graph traversal for a query. Strategy:
@@ -457,12 +644,21 @@ def traverse_and_rank(
     for skill_id in resolution.resolved_skills:
         jobs = index.skill_to_jobs.get(skill_id, [])
         result.exact_hits += len(jobs)
+        kind_mult = _skill_kind_multiplier(
+            skill_id, index, enabled=use_skill_kind_weights
+        )
+        kind_note = ""
+        if use_skill_kind_weights and kind_mult != 1.0:
+            kind_note = (
+                f" [kind={getattr(index, 'skill_kind', {}).get(skill_id, '')}"
+                f" x{kind_mult}]"
+            )
         result.trace_lines.append(
-            f"→ {skill_id} <-[HAS_SKILL]- {len(jobs):,} jobs (0-hop exact)"
+            f"→ {skill_id} <-[HAS_SKILL]- {len(jobs):,} jobs (0-hop exact){kind_note}"
         )
         for job_id, req, conf in jobs:
             weight = 1.0 if req == "required" else (0.8 if req == "preferred" else 0.6)
-            job_scores[job_id] += weight
+            job_scores[job_id] += weight * kind_mult
             job_paths[job_id].append(f"exact:{skill_id}")
             job_skill_matches[job_id].add(skill_id)
 
@@ -503,8 +699,11 @@ def traverse_and_rank(
                     f"→ {skill_id} -[CO_OCCURS {npmi:.3f}]-> {related_skill} "
                     f"<-[HAS_SKILL]- {len(expanded_jobs):,} jobs (1-hop)"
                 )
+                expand_mult = _skill_kind_multiplier(
+                    related_skill, index, enabled=use_skill_kind_weights
+                )
                 for job_id, req, conf in expanded_jobs:
-                    job_scores[job_id] += 0.3 * npmi
+                    job_scores[job_id] += 0.3 * npmi * expand_mult
                     job_paths[job_id].append(f"expand:{related_skill}(npmi={npmi:.2f})")
 
     # Credential path: try resolving query tokens as credentials
@@ -917,6 +1116,36 @@ def _bm25_score(query: str, title: str, requirements: str) -> float:
     return len(overlap) / len(query_tokens)
 
 
+RRF_K = 60
+
+
+def _rrf_fuse(ranked_lists: list[list[str]], k: int = RRF_K) -> dict[str, float]:
+    """
+    Reciprocal Rank Fusion: score(d) = Σ 1/(k + rank_i(d)), rank starting at 1.
+
+    Why rank fusion instead of a weighted score sum. Measured on 300 test
+    queries the two signals are on incompatible scales — BM25 p50=7.76 while
+    graph p50=0.50, a 14.6x mean ratio — so 'graph + 0.3*bm25' let BM25 supply
+    ~81% of the score. Renormalizing the weights to sum to 1 does not fix this:
+    ranking metrics are invariant to multiplying the whole score by a constant,
+    so only the ratio matters, and at these scales any fixed ratio either
+    drowns the graph or drowns BM25.
+
+    RRF also tolerates the graph's flat score distribution (p50 == p95 == 0.50,
+    i.e. most jobs tie on the same occupation-hit bonus). Ties carry no
+    information in a weighted sum but do get broken by position in a ranked
+    list.
+
+    k=60 is the value from the original Cormack et al. RRF paper; it damps the
+    influence of the very top ranks so one confident list cannot dominate.
+    """
+    scores: dict[str, float] = {}
+    for ranked in ranked_lists:
+        for rank, doc_id in enumerate(ranked, start=1):
+            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank)
+    return scores
+
+
 def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
     """
     Full-retrieval evaluation: for each query, retrieve top-K jobs from the
@@ -1014,6 +1243,7 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
 
     # Score each query via full retrieval
     ranking_rows: list[dict] = []
+    incremental_rows: list[dict] = []
     t0 = time.time()
     query_count = 0
 
@@ -1025,29 +1255,25 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
         if not rel_map:
             continue
 
-        retrieved: dict[str, float] = {}  # job_id → score
+        bm25_ranked = [jid for jid, _ in bm25_retrieve(query_text, top_k=TOP_K)]
+        graph_ranked: list[str] = []
 
         if config.use_graph:
-            # Full graph traversal: returns top-K from entire graph
-            result = traverse_and_rank(query_text, index, top_k=TOP_K)
-            for job in result.top_jobs:
-                jid = job["job_id"].removeprefix("job:")
-                retrieved[jid] = job["score"]
-
-            # Also get BM25 candidates and merge (hybrid)
-            bm25_results = bm25_retrieve(query_text, top_k=TOP_K)
-            for jid, bm25_score in bm25_results:
-                if jid in retrieved:
-                    retrieved[jid] += 0.3 * bm25_score
-                else:
-                    retrieved[jid] = 0.3 * bm25_score
+            result = traverse_and_rank(
+                query_text,
+                index,
+                top_k=TOP_K,
+                use_skill_kind_weights=config.use_llm_classification,
+            )
+            graph_ranked = [
+                job["job_id"].removeprefix("job:") for job in result.top_jobs
+            ]
+            retrieved = _rrf_fuse([bm25_ranked, graph_ranked])
         else:
-            # B0: BM25-only full retrieval
-            bm25_results = bm25_retrieve(query_text, top_k=TOP_K)
-            for jid, bm25_score in bm25_results:
-                retrieved[jid] = bm25_score
+            # B0 baseline: BM25 alone, fused through the same function so the
+            # only difference between arms is the presence of the graph list.
+            retrieved = _rrf_fuse([bm25_ranked])
 
-        # Rank retrieved jobs by score, assign relevance from labels
         ranked_jobs = sorted(retrieved.items(), key=lambda x: (-x[1], x[0]))[:TOP_K]
         for jid, score in ranked_jobs:
             ranking_rows.append({
@@ -1056,6 +1282,21 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
                 "score": score,
                 "relevance": rel_map.get(jid, 0),
             })
+
+        # Incremental recall: positives the graph surfaced that BM25's top-K
+        # missed entirely. This is the graph's distinctive contribution and it
+        # stays visible even when aggregate NDCG does not move.
+        if config.use_graph:
+            positives = {jid for jid, rel in rel_map.items() if rel > 0}
+            if positives:
+                bm25_set = set(bm25_ranked)
+                graph_only = (set(graph_ranked) - bm25_set) & positives
+                incremental_rows.append({
+                    "query_id": query_id,
+                    "positives": len(positives),
+                    "bm25_found": len(bm25_set & positives),
+                    "graph_only_found": len(graph_only),
+                })
 
         query_count += 1
         if query_count % 500 == 0:
@@ -1085,25 +1326,50 @@ def run_evaluation(index: GraphIndex, config: Step8Config) -> dict[str, Any]:
     print(f"    hit@1: {metrics_summary['hit@1']:.4f}")
 
     # Recall: how many of the user's positive jobs appear in our top-K?
+    retrieved_by_query: dict[str, set[str]] = defaultdict(set)
+    for row in ranking_rows:
+        retrieved_by_query[row["query_id"]].add(row["job_id"])
     recall_rows: list[float] = []
-    for qid, rel_map_q in relevance_lookup.items():
-        positives = {jid for jid, rel in rel_map_q.items() if rel > 0}
+    for qid, retrieved_for_q in retrieved_by_query.items():
+        positives = {
+            jid for jid, rel in relevance_lookup.get(qid, {}).items() if rel > 0
+        }
         if not positives:
             continue
-        retrieved_for_q = set(
-            r["job_id"] for r in ranking_rows if r["query_id"] == qid
-        )
         recall_rows.append(len(positives & retrieved_for_q) / len(positives))
     metrics_summary[f"recall@{TOP_K}"] = (
         sum(recall_rows) / len(recall_rows) if recall_rows else 0.0
     )
     print(f"    recall@{TOP_K}: {metrics_summary[f'recall@{TOP_K}']:.4f}")
 
+    incremental: dict[str, Any] = {}
+    if incremental_rows:
+        total_pos = sum(r["positives"] for r in incremental_rows)
+        graph_only = sum(r["graph_only_found"] for r in incremental_rows)
+        bm25_found = sum(r["bm25_found"] for r in incremental_rows)
+        queries_helped = sum(1 for r in incremental_rows if r["graph_only_found"] > 0)
+        incremental = {
+            "queries_evaluated": len(incremental_rows),
+            "positives_total": total_pos,
+            "positives_found_by_bm25": bm25_found,
+            "positives_found_only_by_graph": graph_only,
+            "queries_where_graph_added_a_positive": queries_helped,
+            "incremental_recall_share": (
+                graph_only / total_pos if total_pos else 0.0
+            ),
+        }
+        print(f"\n  ─── Graph incremental contribution ───")
+        print(f"    positives found only by graph: {graph_only:,} / {total_pos:,} "
+              f"({incremental['incremental_recall_share']:.2%})")
+        print(f"    queries helped: {queries_helped:,} / {len(incremental_rows):,}")
+
     eval_report = {
         "step": "step8_evaluation",
         "run_id": config.run_id or "default",
         "eval_mode": "full_retrieval",
+        "fusion": {"method": "rrf", "k": RRF_K},
         "top_k": TOP_K,
+        "graph_incremental": incremental,
         "feature_flags": config.feature_flags_dict(),
         "eval_config": {
             "split": config.eval_split,
@@ -1143,7 +1409,9 @@ def main(argv: list[str] | None = None) -> None:
     print("\n" + "─" * 60)
 
     for query in SMOKE_QUERIES:
-        result = traverse_and_rank(query, index)
+        result = traverse_and_rank(
+            query, index, use_skill_kind_weights=config.use_llm_classification
+        )
         results.append(result)
 
         print(f"\n  Query: \"{query}\"")

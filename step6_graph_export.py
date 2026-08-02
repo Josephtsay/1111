@@ -37,6 +37,8 @@ from typing import Any
 
 import duckdb
 
+from step3_canonicalization import sanitize_registry_key
+
 GRAPH_DIR = Path(__file__).parent / "graph"
 
 
@@ -157,7 +159,14 @@ def build_nodes(graph_dir: Path) -> Path:
             with skill_dict.open("r", encoding="utf-8") as sf:
                 reader = csv.DictReader(sf)
                 for row in reader:
-                    key = row.get("registry_key", "")
+                    # Normalize on read: Step 3's registry_key formerly leaked
+                    # parenthetical aliases ('kubernetes(k8s'), and a dictionary
+                    # produced before that fix will not match the edge endpoints
+                    # emitted by Step 4 ('kubernetes_k8s') — that mismatch shows
+                    # up as thousands of dangling edges in Step 7. Applying the
+                    # same sanitizer here makes the export robust to either
+                    # dictionary vintage instead of requiring a manual repair.
+                    key = sanitize_registry_key(row.get("registry_key", ""))
                     node_id = f"skill:{key}"
                     gf = freq.get(node_id, 0)  # 0 for blacklisted skills without frequency
                     writer.writerow({
@@ -176,7 +185,7 @@ def build_nodes(graph_dir: Path) -> Path:
             with cred_dict.open("r", encoding="utf-8") as cf:
                 reader = csv.DictReader(cf)
                 for row in reader:
-                    key = row.get("registry_key", "")
+                    key = sanitize_registry_key(row.get("registry_key", ""))
                     writer.writerow({
                         "node_id": f"credential:{key}",
                         "node_type": "Credential",

@@ -1,0 +1,39 @@
+{
+  "step": "step8_evaluation",
+  "run_id": "track_a_new_B0",
+  "eval_mode": "full_retrieval",
+  "fusion": {
+    "method": "rrf",
+    "k": 60
+  },
+  "top_k": 50,
+  "graph_incremental": {},
+  "feature_flags": {
+    "use_graph": false,
+    "use_llm_extraction": false,
+    "use_llm_classification": false,
+    "use_llm_relations": false,
+    "use_adaptive_traversal": false
+  },
+  "eval_config": {
+    "split": "test",
+    "limit": 2000,
+    "query_count": 2000,
+    "label_count": 77089
+  },
+  "metrics": {
+    "ndcg@10": 0.012088328560791797,
+    "precision@10": 0.0022790439132851586,
+    "top1": 0.005002779321845469,
+    "mrr": 0.010928354757451736,
+    "hit@10": 0.0216787103946637,
+    "query_count": 1799.0,
+    "hit@1": 0.005002779321845469,
+    "recall@50": 0.02910924539607141
+  },
+  "eval_time_seconds": 1.4,
+  "per_query_summary": {
+    "total": 1799,
+    "with_hits": 39
+  }
+}

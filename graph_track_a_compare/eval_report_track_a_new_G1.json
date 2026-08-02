@@ -1,0 +1,46 @@
+{
+  "step": "step8_evaluation",
+  "run_id": "track_a_new_G1",
+  "eval_mode": "full_retrieval",
+  "fusion": {
+    "method": "rrf",
+    "k": 60
+  },
+  "top_k": 50,
+  "graph_incremental": {
+    "queries_evaluated": 2000,
+    "positives_total": 4361,
+    "positives_found_by_bm25": 105,
+    "positives_found_only_by_graph": 9,
+    "queries_where_graph_added_a_positive": 9,
+    "incremental_recall_share": 0.0020637468470534283
+  },
+  "feature_flags": {
+    "use_graph": true,
+    "use_llm_extraction": false,
+    "use_llm_classification": false,
+    "use_llm_relations": false,
+    "use_adaptive_traversal": false
+  },
+  "eval_config": {
+    "split": "test",
+    "limit": 2000,
+    "query_count": 2000,
+    "label_count": 81263
+  },
+  "metrics": {
+    "ndcg@10": 0.010513722938928891,
+    "precision@10": 0.001813186813186813,
+    "top1": 0.006043956043956044,
+    "mrr": 0.01038781225917348,
+    "hit@10": 0.017582417582417582,
+    "query_count": 1820.0,
+    "hit@1": 0.006043956043956044,
+    "recall@50": 0.02866676973819831
+  },
+  "eval_time_seconds": 65.6,
+  "per_query_summary": {
+    "total": 1820,
+    "with_hits": 32
+  }
+}

@@ -49,6 +49,8 @@ graphify-out/
 outputs/
 artifacts/
 graph/
+graph_golden_slice_validation/
+graph_full_backup/
 *.parquet
 *.sqlite
 *.db

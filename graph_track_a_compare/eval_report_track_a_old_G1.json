@@ -1,0 +1,34 @@
+{
+  "step": "step8_evaluation",
+  "run_id": "track_a_old_G1",
+  "eval_mode": "full_retrieval",
+  "top_k": 50,
+  "feature_flags": {
+    "use_graph": true,
+    "use_llm_extraction": false,
+    "use_llm_classification": false,
+    "use_llm_relations": false,
+    "use_adaptive_traversal": false
+  },
+  "eval_config": {
+    "split": "test",
+    "limit": 2000,
+    "query_count": 2000,
+    "label_count": 79740
+  },
+  "metrics": {
+    "ndcg@10": 0.011067880381052705,
+    "precision@10": 0.0023862375138734744,
+    "top1": 0.004439511653718091,
+    "mrr": 0.009573380517120915,
+    "hit@10": 0.020532741398446172,
+    "query_count": 1802.0,
+    "hit@1": 0.004439511653718091,
+    "recall@50": 0.026489321789321788
+  },
+  "eval_time_seconds": 56.6,
+  "per_query_summary": {
+    "total": 1802,
+    "with_hits": 37
+  }
+}
