@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  1111 Job Search API — Hybrid search (BM25 + kNN) 端點。
+  公開存取，無需 API key。
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 30
+    MemorySize: 512
+    Architectures:
+      - x86_64
+
+Parameters:
+  AwsRegion:
+    Type: String
+    Default: us-east-1
+  BedrockEmbedModelId:
+    Type: String
+    Default: us.cohere.embed-v4:0
+  EmbedDim:
+    Type: String
+    Default: "1536"
+  OpenSearchEndpoint:
+    Type: String
+  OpenSearchIndex:
+    Type: String
+    Default: jobs_v1
+  OpenSearchAuth:
+    Type: String
+    Default: basic
+    AllowedValues:
+      - aws_iam
+      - basic
+      - none
+  OpenSearchUsername:
+    Type: String
+    Default: ""
+  OpenSearchPassword:
+    Type: String
+    Default: ""
+    NoEcho: true
+  OpenSearchService:
+    Type: String
+    Default: es
+  OpenSearchVerifyCerts:
+    Type: String
+    Default: "true"
+
+Resources:
+  SearchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src.lambda_handler.handler
+      CodeUri: .
+      Description: "Hybrid search API (FastAPI + Mangum)"
+      Environment:
+        Variables:
+          AWS_REGION_NAME: !Ref AwsRegion
+          BEDROCK_EMBED_MODEL_ID: !Ref BedrockEmbedModelId
+          EMBED_DIM: !Ref EmbedDim
+          OPENSEARCH_ENDPOINT: !Ref OpenSearchEndpoint
+          OPENSEARCH_INDEX: !Ref OpenSearchIndex
+          OPENSEARCH_AUTH: !Ref OpenSearchAuth
+          OPENSEARCH_USERNAME: !Ref OpenSearchUsername
+          OPENSEARCH_PASSWORD: !Ref OpenSearchPassword
+          OPENSEARCH_SERVICE: !Ref OpenSearchService
+          OPENSEARCH_VERIFY_CERTS: !Ref OpenSearchVerifyCerts
+      Policies:
+        # 允許呼叫 Bedrock embedding
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        # HTTP API (v2) — 公開，無需 auth
+        SearchApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SearchHttpApi
+
+  SearchHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: "$default"
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - "*"
+
+Outputs:
+  ApiUrl:
+    Description: "公開 API URL（評審直接用這個）"
+    Value: !Sub "https://${SearchHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  FunctionArn:
+    Description: "Lambda ARN"
+    Value: !GetAtt SearchFunction.Arn
