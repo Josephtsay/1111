@@ -1,16 +1,25 @@
 # 1111 Skill Graph — 2026 雲湧智生：臺灣生成式 AI 應用黑客松
 
-分支：`feat/skill-graph`
-
 從 1111 職缺資料建立技能圖譜，用於檢索與排序，並產出命題要求的 graph schema、
 traversal trace 與「有圖 vs 無圖」ablation。
+
+**本文件描述 `feat/skill-graph`。** 其他分支：
+
+| 分支 | 內容 |
+|------|------|
+| `feat/skill-graph` | 主線開發分支，本文件所述的全部內容 |
+| `no-graph-search` | 無圖譜版 hybrid search API（BM25 + kNN，OpenSearch + Bedrock，可部署到 Lambda），獨立於本分支 |
+| `main` / `layered_graph` | 都還停在 `97287d8`，即整理前、playbook 之前的初版狀態 |
+
+`no-graph-search` 與 `layered_graph` 是從 `97287d8` 分出去的，**不含本分支的目錄整理**，
+所以那邊的檔案位置與這份 README 不一致，合併前要留意。
 
 **先讀這三份，再動手：**
 
 | 文件 | 用途 |
 |------|------|
 | `docs/SKILL_GRAPH_PLAYBOOK.md` | 建圖手冊、Schema v0.1（已凍結）、品質閘門、分工 |
-| `.kiro/steering/project-state.md` | 目前進度、**已量過的數字**、10 個已知地雷 |
+| `.kiro/steering/project-state.md` | 目前進度、**已量過的數字**、11 個已知地雷 |
 | 根目錄兩份 `*.pdf` | 命題文件 + 工作坊簡報（權威來源，見 playbook §1.1；`*.pdf` 已 gitignore） |
 
 數字不要在這份 README 裡複述——一律以 `project-state.md` 與各 manifest 為準，
@@ -94,12 +103,25 @@ pipeline/step5_statistical_edges.py      CO_OCCURS_WITH / CORE_SKILL / global_jo
 pipeline/step6_graph_export.py           nodes.csv / edges.csv
 pipeline/step7_quality_gate.py           品質閘門（無 FAIL 才算過）
         ↓
-pipeline/step8_retrieval_smoke.py        檢索 smoke + 評估 harness
+pipeline/step8_retrieval_smoke.py        query preprocess / resolve + 檢索 smoke + 評估 harness
 pipeline/step9_ablation.py --ablation    B0 / G1 / G2
 ```
 
 A 支線（LLM）：`step_a0`/`step_a0b` bake-off → `step_a5` soft-skill blacklist →
 `step_a6` skill 分類 → `step_a7`/`step_a7b` 可重現統計。
+
+Query 解析輔助（`26bdb4a` 之後）：`step8` 的 `preprocess_query()` 會做 train 語料驅動的
+斷詞與職稱後綴剝離（如 `小貨車司機` → `['小貨車司機', '小貨車', '司機']`），
+**預設開啟、沒有旗標可關**。要看它的效果差異用：
+
+```bash
+python pipeline/probe_query_preprocess.py   # 抽樣看 preprocess / resolve 結果
+python pipeline/ab_preprocess_eval.py       # A/B 全檢索評估，寫回 graph_track_a_compare/
+```
+
+兩支都需要 Step 4→6 的產物（`graph/edges.csv`、`nodes.csv`）。
+只有 `probe` 的 preprocess 段落是 index-free，沒有圖也能看；
+它的 resolve 段落與 `ab_preprocess_eval.py` 在沒有 `graph/edges.csv` 的機器上會直接 FileNotFoundError。
 
 ### 執行注意
 
@@ -110,18 +132,36 @@ A 支線（LLM）：`step_a0`/`step_a0b` bake-off → `step_a5` soft-skill black
 - `exit 0` 不是成功證據，以 Step 7 結果為準。
 - `step8` 的評估 harness 會 import `job_skill_graph.metrics`；該 package 在根目錄，
   不是 `pipeline/` 的 sibling，靠 `pipeline/step8_retrieval_smoke.py` 開頭的 `sys.path` 插入解決。
+- **`step1` 目前跑不起來**：它與 `step1b`、`step6`、`step8` 讀的是 `data/raw/`，
+  而該目錄不存在（實際資料在 `dataset/`，`step2a`／`step2b` 讀的就是 `dataset/`）。
+  `graph/step1_manifest.json` 記錄的來源是 `dataset/職缺.csv`，所以 step1 無法重現自己的
+  manifest。修法要動到 `step6`（凍結範圍），需雙人同意，詳見地雷 #11。
 
 ---
 
 ## 測試
 
-不需要全量 artifact，可直接跑：
+不需要任何 `graph/` 產物，clone 完就能跑：
 
 ```bash
 python3 tests/test_location_mask_mock.py   # 24 checks
 python3 tests/test_step4_mock.py
 python3 tests/test_step5_mock.py
-python3 .kiro/hooks/scripts/selftest.py    # 24 checks，驗 .kiro hooks
+python3 .kiro/hooks/scripts/selftest.py    # 24 checks，驗 .kiro hooks 的 guard 邏輯
+```
+
+搬動檔案或改路徑之後，額外確認 24 支 pipeline 模組都還 import 得起來：
+
+```bash
+cd pipeline && PYTHONPATH=. python3 -c \
+  "import importlib,glob,os; [importlib.import_module(os.path.splitext(f)[0]) for f in glob.glob('*.py')]; print('all pipeline modules import')"
+```
+
+只有 A 的機器（有 Step 1/2/3 + A5/A6 產物）能跑的可重現檢查：
+
+```bash
+python3 pipeline/step_a7b_key_change_impact.py   # 應重現 296 個 registry ID
+python3 pipeline/step_a7_data_composition.py     # 資料組成比例
 ```
 
 ---
