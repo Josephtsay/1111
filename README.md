@@ -27,7 +27,9 @@ traversal trace 與「有圖 vs 無圖」ablation。
 │   ├─ step_a0…step_a7b               A 支線：LLM bake-off、blacklist、分類、可重現統計
 │   ├─ assertion_detection.py         step2b / step2c 共用的 assertion 判定（規則法）
 │   ├─ build_phrase_lexicon.py        step2b 的片語詞典建置
-│   └─ llm_client.py                  Bedrock 呼叫層（step_a0b / step_a6）
+│   ├─ llm_client.py                  Bedrock 呼叫層（step_a0b / step_a6）
+│   ├─ ab_preprocess_eval.py          query preprocess A/B 全檢索評估
+│   └─ probe_query_preprocess.py      preprocess / resolve 覆蓋率探測
 │
 ├─ job_skill_graph/                ← 初版上傳的 package（見該資料夾 README）
 ├─ tests/                          ← mock 測試（不需要全量 artifact）
@@ -40,8 +42,11 @@ traversal trace 與「有圖 vs 無圖」ablation。
 ├─ *.pdf                           ← 命題文件 + 工作坊簡報（gitignore，留在根目錄）
 ├─ dataset/                        ← 六份原始 CSV（3.8GB，gitignore）
 ├─ graph/                          ← pipeline 產物（gitignore，每台機器各自本地）
-└─ graph_track_a_compare/          ← Track A 新舊對照 eval 報告（進 git）
+└─ graph_track_a_compare/          ← Track A 對照 eval 報告（**只放結果**，進 git）
 ```
+
+慣例：**腳本一律放 `pipeline/`，產出的報告放 `graph_track_a_compare/`。**
+`ab_preprocess_eval.py` 搬進 `pipeline/` 後仍寫回 `graph_track_a_compare/ab_preprocess_eval.json`。
 
 **`graph/` 不進 git。** pull 完不等於有圖；要對齊就交換 artifact hash 或各自重跑。
 

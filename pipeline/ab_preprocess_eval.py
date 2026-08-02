@@ -13,13 +13,20 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+import sys
+
 import duckdb
 import pandas as pd
 
-import step8_retrieval_smoke as s8
-from metrics import evaluate_rankings
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # pipeline/ -> repo root
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-OUT = Path(__file__).resolve().parent
+import step8_retrieval_smoke as s8  # noqa: E402  (pipeline/ sibling)
+from job_skill_graph.metrics import evaluate_rankings  # noqa: E402
+
+# 腳本住 pipeline/，產物仍寫回 graph_track_a_compare/（已進 git 的結果目錄）
+OUT = _REPO_ROOT / "graph_track_a_compare"
 TOP_K = 50
 
 
