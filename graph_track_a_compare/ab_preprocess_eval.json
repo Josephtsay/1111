@@ -1,0 +1,72 @@
+{
+  "sample": "test ORDER BY query_id LIMIT 2000",
+  "legacy": {
+    "arm": "legacy",
+    "metrics": {
+      "ndcg@10": 0.0072523048978494885,
+      "precision@10": 0.0015063731170336038,
+      "top1": 0.0034762456546929316,
+      "mrr": 0.007343978534651325,
+      "hit@10": 0.013325608342989572,
+      "query_count": 1726.0,
+      "hit@1": 0.0034762456546929316,
+      "recall@50": 0.020532345213689362
+    },
+    "resolve": {
+      "skill": 6,
+      "occ": 865,
+      "both": 1,
+      "none": 1128,
+      "any_anchor_rate": 0.436
+    },
+    "graph_incremental": {
+      "positives_found_only_by_graph": 9,
+      "positives_total": 4568,
+      "queries_helped": 8,
+      "share": 0.001970227670753065
+    },
+    "eval_time_seconds": 65.6,
+    "queries_scored": 1726,
+    "with_hits": 23
+  },
+  "preprocess": {
+    "arm": "preprocess",
+    "metrics": {
+      "ndcg@10": 0.006682701818196099,
+      "precision@10": 0.0014204545454545455,
+      "top1": 0.002840909090909091,
+      "mrr": 0.00675727715532663,
+      "hit@10": 0.0125,
+      "query_count": 1760.0,
+      "hit@1": 0.002840909090909091,
+      "recall@50": 0.019865134865134863
+    },
+    "resolve": {
+      "skill": 6,
+      "occ": 1134,
+      "both": 1,
+      "none": 859,
+      "any_anchor_rate": 0.5705
+    },
+    "graph_incremental": {
+      "positives_found_only_by_graph": 10,
+      "positives_total": 4568,
+      "queries_helped": 9,
+      "share": 0.0021891418563922942
+    },
+    "eval_time_seconds": 120.9,
+    "queries_scored": 1760,
+    "with_hits": 22
+  },
+  "delta_preprocess_minus_legacy": {
+    "ndcg@10": -0.0005696030796533899,
+    "mrr": -0.0005867013793246952,
+    "hit@10": -0.000825608342989571,
+    "hit@1": -0.0006353365637838406,
+    "recall@50": -0.0006672103485544992
+  },
+  "resolve_any_anchor": {
+    "legacy": 0.436,
+    "preprocess": 0.5705
+  }
+}
