@@ -34,7 +34,10 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError:  # Lambda runtime — only pkl cache is used
+    pd = None  # type: ignore[assignment]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

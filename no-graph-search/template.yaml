@@ -6,7 +6,6 @@ Description: >
 
 Globals:
   Function:
-    Runtime: python3.13
     Timeout: 30
     MemorySize: 512
     Architectures:
@@ -51,9 +50,12 @@ Parameters:
 Resources:
   SearchFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: .
+      DockerTag: latest
     Properties:
-      Handler: src.lambda_handler.handler
-      CodeUri: .
+      PackageType: Image
       Description: "Hybrid search API (FastAPI + Mangum)"
       Environment:
         Variables:
