@@ -11,14 +11,19 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from .backend_graph import GraphBackend
 from .backend_no_graph import NoGraphBackend
 from .schema import BackendResult, SearchRequest, SearchResponse
+
+# 前端單檔頁面。本機與 Lambda 的相對位置一致（repo 根目錄 / var/task）。
+_INDEX_HTML = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
 
 
 # --------------------------------------------------------------------------
@@ -114,6 +119,18 @@ def _do_search(req: SearchRequest) -> SearchResponse:
 # --------------------------------------------------------------------------
 # Endpoints
 # --------------------------------------------------------------------------
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def index():
+    """搜尋比較頁面。跟 API 同源，前端直接打相對路徑。"""
+    if not _INDEX_HTML.is_file():
+        return HTMLResponse(
+            "<h1>1111 Unified Search API</h1>"
+            "<p>前端頁面未打包。API 端點：<code>/search</code>、<code>/health</code></p>",
+            status_code=200,
+        )
+    return HTMLResponse(_INDEX_HTML.read_text(encoding="utf-8"))
 
 
 @app.get("/health")

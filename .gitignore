@@ -79,3 +79,7 @@ credentials.json
 tmp/
 temp/
 .cache/
+
+# SAM build staging
+deploy/
+.aws-sam/

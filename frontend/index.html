@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>1111 職缺搜尋</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f5f7fa;
+      color: #333;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 1.5rem;
+      font-size: 1.6rem;
+      color: #1a1a2e;
+    }
+
+    /* Search bar */
+    .search-bar {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .search-bar input {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      font-size: 1rem;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .search-bar input:focus {
+      border-color: #4a90d9;
+    }
+
+    .search-bar button {
+      padding: 0.75rem 1.5rem;
+      font-size: 1rem;
+      background: #4a90d9;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .search-bar button:hover { background: #357abd; }
+    .search-bar button:disabled { background: #aaa; cursor: not-allowed; }
+
+    /* Toggle */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .toggle-row label {
+      font-size: 0.9rem;
+      color: #555;
+    }
+
+    .toggle-group {
+      display: flex;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid #ddd;
+    }
+
+    .toggle-group button {
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+      border: none;
+      background: #fff;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .toggle-group button.active {
+      background: #4a90d9;
+      color: #fff;
+    }
+
+    .toggle-group button:not(:last-child) {
+      border-right: 1px solid #ddd;
+    }
+
+    /* Results */
+    .results-section {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .backend-column {
+      flex: 1;
+      min-width: 300px;
+    }
+
+    .backend-column h2 {
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 2px solid #4a90d9;
+    }
+
+    .backend-column h2 .meta {
+      font-weight: normal;
+      font-size: 0.8rem;
+      color: #777;
+    }
+
+    .hit-card {
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 0.6rem;
+      transition: box-shadow 0.2s;
+    }
+
+    .hit-card:hover {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .hit-card .title {
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 0.3rem;
+    }
+
+    .hit-card .details {
+      font-size: 0.82rem;
+      color: #666;
+      line-height: 1.5;
+    }
+
+    .hit-card .details span {
+      margin-right: 0.8rem;
+    }
+
+    .hit-card .skills {
+      margin-top: 0.4rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+    }
+
+    .hit-card .skills .tag {
+      background: #e8f4fd;
+      color: #2a7ab8;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+
+    .status {
+      text-align: center;
+      padding: 2rem;
+      color: #999;
+      font-size: 0.9rem;
+    }
+
+    .error {
+      color: #d9534f;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>1111 職缺搜尋比較</h1>
+
+    <div class="search-bar">
+      <input type="text" id="queryInput" placeholder="輸入搜尋關鍵字，例如：水電、前端工程師" />
+      <button id="searchBtn">搜尋</button>
+    </div>
+
+    <div class="toggle-row">
+      <label>Backend：</label>
+      <div class="toggle-group" id="toggleGroup">
+        <button data-backend="no-graph" class="active">無圖譜</button>
+        <button data-backend="graph">有圖譜</button>
+        <button data-backend="both">兩者比較</button>
+      </div>
+    </div>
+
+    <div id="results">
+      <div class="status">輸入關鍵字開始搜尋</div>
+    </div>
+  </div>
+
+  <script>
+    // 這個頁面由 unified API 自己提供，所以預設打同源的相對路徑。
+    // 用 file:// 直接開檔時沒有同源可用，改連線上 API。?api=<url> 可手動覆蓋。
+    const DEPLOYED_API = 'https://jr0phjkmvh.execute-api.us-west-2.amazonaws.com';
+    const API_BASE = new URLSearchParams(location.search).get('api')
+      ?? (location.protocol === 'file:' ? DEPLOYED_API : '');
+
+    const queryInput = document.getElementById('queryInput');
+    const searchBtn = document.getElementById('searchBtn');
+    const toggleGroup = document.getElementById('toggleGroup');
+    const resultsDiv = document.getElementById('results');
+
+    let selectedBackend = 'no-graph';
+
+    // Toggle buttons
+    toggleGroup.addEventListener('click', (e) => {
+      if (e.target.tagName !== 'BUTTON') return;
+      toggleGroup.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      selectedBackend = e.target.dataset.backend;
+    });
+
+    // Search on Enter
+    queryInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doSearch();
+    });
+
+    searchBtn.addEventListener('click', doSearch);
+
+    async function doSearch() {
+      const query = queryInput.value.trim();
+      if (!query) return;
+
+      searchBtn.disabled = true;
+      resultsDiv.innerHTML = '<div class="status">搜尋中...</div>';
+
+      try {
+        const params = new URLSearchParams({
+          ks: query,
+          backend: selectedBackend,
+          top_k: '10',
+        });
+
+        const res = await fetch(`${API_BASE}/search?${params}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json();
+        renderResults(data);
+      } catch (err) {
+        resultsDiv.innerHTML = `<div class="status error">搜尋失敗：${err.message}</div>`;
+      } finally {
+        searchBtn.disabled = false;
+      }
+    }
+
+    function renderResults(data) {
+      if (!data.results || data.results.length === 0) {
+        resultsDiv.innerHTML = '<div class="status">沒有結果</div>';
+        return;
+      }
+
+      const html = data.results.map(backendResult => {
+        const label = backendResult.backend === 'no-graph' ? '無圖譜 (OpenSearch)' : '有圖譜 (Skill Graph)';
+        const hitsHtml = backendResult.hits.map((hit, i) => {
+          const skills = (hit.matched_skills || []).map(s => `<span class="tag">${s}</span>`).join('');
+          return `
+            <div class="hit-card">
+              <div class="title">${i + 1}. ${hit.title || hit.job_id}</div>
+              <div class="details">
+                <span>📍 ${hit.city || '-'}${hit.district ? ' ' + hit.district : ''}</span>
+                <span>💰 ${hit.salary_text || '-'}</span>
+                <span>📊 ${hit.score.toFixed(3)}</span>
+              </div>
+              ${skills ? `<div class="skills">${skills}</div>` : ''}
+            </div>
+          `;
+        }).join('');
+
+        return `
+          <div class="backend-column">
+            <h2>${label} <span class="meta">${backendResult.total} 筆 / ${backendResult.took_ms}ms</span></h2>
+            ${hitsHtml || '<div class="status">無結果</div>'}
+          </div>
+        `;
+      }).join('');
+
+      resultsDiv.innerHTML = `<div class="results-section">${html}</div>`;
+    }
+  </script>
+</body>
+</html>
