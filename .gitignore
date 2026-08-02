@@ -34,6 +34,7 @@ Thumbs.db
 *~
 
 # Local datasets (large CSVs; keep out of git)
+*.csv
 dataset/
 datasets/
 data/raw/
